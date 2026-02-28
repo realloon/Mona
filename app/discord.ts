@@ -15,10 +15,8 @@ import {
 } from 'discord.js'
 import { McpToolManager, parseToolArguments } from './mcp.js'
 import { SkillManager } from './skills.js'
-import {
-  type DangerousCommandRequest,
-  FunctionToolManager,
-} from './function-tools.js'
+import { FunctionToolManager } from './function-tools.js'
+import type { DangerousCommandRequest } from './types/tools.js'
 
 type Role = 'user' | 'assistant'
 type Turn = {

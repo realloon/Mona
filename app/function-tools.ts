@@ -1,13 +1,9 @@
 import path from 'node:path'
-
-type OpenAIFunctionTool = {
-  type: 'function'
-  function: {
-    name: string
-    description: string
-    parameters: Record<string, unknown>
-  }
-}
+import type {
+  DangerousCommandRequest,
+  FunctionToolCallHooks,
+  OpenAIFunctionTool,
+} from './types/tools.js'
 
 type FunctionToolOptions = {
   projectRoot: string
@@ -15,19 +11,10 @@ type FunctionToolOptions = {
   maxOutputChars: number
 }
 
-export type DangerousCommandRequest = {
-  command: string
-  cwd: string
-  reason: string
-}
-
-export type FunctionToolCallHooks = {
-  confirmDangerousCommand?: (
-    request: DangerousCommandRequest,
-  ) => Promise<boolean>
-}
 
 const RUN_TERMINAL_COMMAND = 'builtin__run'
+const READ_FILE_TOOL = 'builtin__read'
+const EDIT_FILE_TOOL = 'builtin__edit'
 const MIN_TIMEOUT_MS = 100
 const MAX_TIMEOUT_MS = 120000
 
@@ -104,11 +91,15 @@ export class FunctionToolManager {
   }
 
   getStatusSummary(): string {
-    return `Terminal tool: enabled (timeout=${this.defaultTimeoutMs}ms, maxOutput=${this.maxOutputChars})`
+    return `Builtin tools: enabled (run/read/edit, timeout=${this.defaultTimeoutMs}ms, maxOutput=${this.maxOutputChars})`
   }
 
   hasOpenAITool(name: string): boolean {
-    return name === RUN_TERMINAL_COMMAND
+    return (
+      name === RUN_TERMINAL_COMMAND ||
+      name === READ_FILE_TOOL ||
+      name === EDIT_FILE_TOOL
+    )
   }
 
   getOpenAITools(): OpenAIFunctionTool[] {
@@ -143,6 +134,62 @@ export class FunctionToolManager {
           },
         },
       },
+      {
+        type: 'function',
+        function: {
+          name: READ_FILE_TOOL,
+          description:
+            'Read a UTF-8 text file under the project root and return its content.',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: {
+                type: 'string',
+                description: 'File path relative to project root.',
+              },
+            },
+            required: ['path'],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: EDIT_FILE_TOOL,
+          description:
+            'Create or edit a UTF-8 text file under the project root. Supports replace or append.',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: {
+                type: 'string',
+                description: 'File path relative to project root.',
+              },
+              content: {
+                type: 'string',
+                description: 'Text content to write or append.',
+              },
+              mode: {
+                type: 'string',
+                enum: ['replace', 'append'],
+                description: 'Write mode. Defaults to replace.',
+              },
+              create_dirs: {
+                type: 'boolean',
+                description: 'Whether to create parent directories if missing. Defaults to true.',
+              },
+              overwrite: {
+                type: 'boolean',
+                description:
+                  'When mode=replace, whether to overwrite existing file. Defaults to true.',
+              },
+            },
+            required: ['path', 'content'],
+            additionalProperties: false,
+          },
+        },
+      },
     ]
   }
 
@@ -151,10 +198,25 @@ export class FunctionToolManager {
     rawArgs: unknown,
     hooks?: FunctionToolCallHooks,
   ): Promise<string> {
-    if (name !== RUN_TERMINAL_COMMAND) {
-      return `Unknown local tool: ${name}`
+    if (name === RUN_TERMINAL_COMMAND) {
+      return await this.callRunTool(rawArgs, hooks)
     }
 
+    if (name === READ_FILE_TOOL) {
+      return await this.callReadTool(rawArgs)
+    }
+
+    if (name === EDIT_FILE_TOOL) {
+      return await this.callEditTool(rawArgs)
+    }
+
+    return `Unknown local tool: ${name}`
+  }
+
+  private async callRunTool(
+    rawArgs: unknown,
+    hooks?: FunctionToolCallHooks,
+  ): Promise<string> {
     const args = asObject(rawArgs)
     const command = typeof args.command === 'string' ? args.command.trim() : ''
     if (!command) {
@@ -162,7 +224,7 @@ export class FunctionToolManager {
     }
 
     const requestedCwd = typeof args.cwd === 'string' ? args.cwd.trim() : ''
-    const cwd = this.resolveAndValidateCwd(requestedCwd)
+    const cwd = this.resolveAndValidatePath(requestedCwd)
     if (cwd.ok === false) {
       return cwd.error
     }
@@ -229,7 +291,81 @@ export class FunctionToolManager {
     }
   }
 
-  private resolveAndValidateCwd(input: string): { ok: true; path: string } | { ok: false; error: string } {
+  private async callReadTool(rawArgs: unknown): Promise<string> {
+    const args = asObject(rawArgs)
+    const rawPath = typeof args.path === 'string' ? args.path.trim() : ''
+    if (!rawPath) {
+      return 'Invalid arguments: "path" must be a non-empty string.'
+    }
+
+    const resolved = this.resolveAndValidatePath(rawPath)
+    if (resolved.ok === false) {
+      return resolved.error
+    }
+
+    const file = Bun.file(resolved.path)
+    if (!(await file.exists())) {
+      return `File not found: ${rawPath}`
+    }
+
+    try {
+      const content = await file.text()
+      const text = truncateText(content, this.maxOutputChars)
+      return [`path: ${rawPath}`, '', text || '(empty file)'].join('\n')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `Read file failed (${rawPath}): ${message}`
+    }
+  }
+
+  private async callEditTool(rawArgs: unknown): Promise<string> {
+    const args = asObject(rawArgs)
+    const rawPath = typeof args.path === 'string' ? args.path.trim() : ''
+    if (!rawPath) {
+      return 'Invalid arguments: "path" must be a non-empty string.'
+    }
+
+    const content = typeof args.content === 'string' ? args.content : ''
+    const modeRaw = typeof args.mode === 'string' ? args.mode.trim() : ''
+    const mode = modeRaw === 'append' ? 'append' : 'replace'
+    const createDirs = args.create_dirs !== false
+    const overwrite = args.overwrite !== false
+
+    const resolved = this.resolveAndValidatePath(rawPath)
+    if (resolved.ok === false) {
+      return resolved.error
+    }
+
+    const file = Bun.file(resolved.path)
+    const exists = await file.exists()
+
+    if (mode === 'replace' && exists && !overwrite) {
+      return `Refused to overwrite existing file: ${rawPath}`
+    }
+
+    try {
+      const writeOptions = { createPath: createDirs }
+      if (mode === 'append') {
+        const previous = exists ? await file.text() : ''
+        await Bun.write(resolved.path, `${previous}${content}`, writeOptions)
+      } else {
+        await Bun.write(resolved.path, content, writeOptions)
+      }
+
+      return [
+        `path: ${rawPath}`,
+        `mode: ${mode}`,
+        `bytes_written: ${content.length}`,
+      ].join('\n')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `Edit file failed (${rawPath}): ${message}`
+    }
+  }
+
+  private resolveAndValidatePath(
+    input: string,
+  ): { ok: true; path: string } | { ok: false; error: string } {
     const base = this.projectRoot
     if (!input) {
       return { ok: true, path: base }
@@ -240,7 +376,7 @@ export class FunctionToolManager {
     if (resolved !== base && !resolved.startsWith(allowedPrefix)) {
       return {
         ok: false,
-        error: `Invalid cwd: "${input}" resolves outside project root.`,
+        error: `Invalid path: "${input}" resolves outside project root.`,
       }
     }
 

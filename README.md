@@ -97,13 +97,14 @@ MCP 动态开关状态会持久化到 `.agents/mcp.state.json`：
 
 ## 6. 终端命令工具（Function Calling）
 
-系统默认暴露 `builtin__run` 工具（非 MCP）。
+系统默认暴露以下内建工具（非 MCP）：
 
-- 用途：在项目目录内执行命令，并把 stdout/stderr 返回给模型
-- 执行方式：`/bin/sh -lc "<command>"`
-- `cwd` 只能在当前项目根目录内，避免越界执行
-- 可通过 `timeout_ms` 控制单次执行超时
-- 高风险命令（如含 `rm`/`mkfs`/`dd`/`sudo` 等）会在 Discord 弹出 `Yes/No` 按钮确认，只有原请求用户可批准执行
+- `builtin__run`：在项目目录内执行命令并返回 stdout/stderr
+- `builtin__read`：读取项目目录内文本文件
+- `builtin__edit`：写入/追加项目目录内文本文件
+- 所有路径都限制在当前项目根目录内，避免越界访问
+- `builtin__run` 可通过 `timeout_ms` 控制单次执行超时
+- `builtin__run` 高风险命令（如含 `rm`/`mkfs`/`dd`/`sudo` 等）会在 Discord 弹出 `Yes/No` 按钮确认，只有原请求用户可批准执行
 ## 7. Skills 配置
 
 Skills 目录固定为 `.agents/skills`，每个 skill 放在独立子目录并包含 `SKILL.md`。

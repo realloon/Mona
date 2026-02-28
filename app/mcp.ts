@@ -2,8 +2,7 @@ import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { mkdir } from 'node:fs/promises'
-import path from 'node:path'
+import type { OpenAIFunctionTool } from './types/tools.js'
 
 type McpServerConfig = {
   url?: string
@@ -20,15 +19,6 @@ type McpToolBinding = {
   description?: string
   inputSchema?: unknown
   client: McpClient
-}
-
-type OpenAIFunctionTool = {
-  type: 'function'
-  function: {
-    name: string
-    description: string
-    parameters: Record<string, unknown>
-  }
 }
 
 type McpLoadResult = {
@@ -192,9 +182,8 @@ async function readMcpStateFile(): Promise<PersistedMcpState> {
 
 async function writeMcpStateFile(state: PersistedMcpState): Promise<void> {
   const statePath = getMcpStateFilePath()
-  await mkdir(path.dirname(statePath), { recursive: true })
   const content = `${JSON.stringify(state, null, 2)}\n`
-  await Bun.write(statePath, content)
+  await Bun.write(statePath, content, { createPath: true })
 }
 
 function normalizeToolContent(result: unknown): string {
