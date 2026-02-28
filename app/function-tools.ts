@@ -15,8 +15,10 @@ type FunctionToolOptions = {
 const RUN_TERMINAL_COMMAND = 'builtin__run'
 const READ_FILE_TOOL = 'builtin__read'
 const EDIT_FILE_TOOL = 'builtin__edit'
+const PATCH_FILE_TOOL = 'builtin__patch'
 const MIN_TIMEOUT_MS = 100
 const MAX_TIMEOUT_MS = 120000
+const MAX_PATCH_HUNKS = 200
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -46,6 +48,22 @@ function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
+}
+
+function asLineArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) {
+    return null
+  }
+  if (!value.every(v => typeof v === 'string')) {
+    return null
+  }
+  return value as string[]
+}
+
+type ParsedPatchHunk = {
+  startLine: number
+  deleteCount: number
+  insertLines: string[]
 }
 
 function detectDangerousCommand(command: string): string | null {
@@ -91,14 +109,15 @@ export class FunctionToolManager {
   }
 
   getStatusSummary(): string {
-    return `Builtin tools: enabled (run/read/edit, timeout=${this.defaultTimeoutMs}ms, maxOutput=${this.maxOutputChars})`
+    return `Builtin tools: enabled (run/read/edit/patch, timeout=${this.defaultTimeoutMs}ms, maxOutput=${this.maxOutputChars})`
   }
 
   hasOpenAITool(name: string): boolean {
     return (
       name === RUN_TERMINAL_COMMAND ||
       name === READ_FILE_TOOL ||
-      name === EDIT_FILE_TOOL
+      name === EDIT_FILE_TOOL ||
+      name === PATCH_FILE_TOOL
     )
   }
 
@@ -108,25 +127,24 @@ export class FunctionToolManager {
         type: 'function',
         function: {
           name: RUN_TERMINAL_COMMAND,
-          description:
-            'Execute a shell command in the local project workspace and return stdout/stderr.',
+          description: 'Run a command.',
           parameters: {
             type: 'object',
             properties: {
               command: {
                 type: 'string',
-                description: 'Command string executed with /bin/sh -lc "<command>".',
+                description: 'Command text.',
               },
               cwd: {
                 type: 'string',
-                description:
-                  'Optional working directory; relative paths are resolved from project root.',
+                description: 'Working directory path.',
               },
               timeout_ms: {
                 type: 'integer',
                 minimum: MIN_TIMEOUT_MS,
                 maximum: MAX_TIMEOUT_MS,
-                description: `Optional timeout in ms (${MIN_TIMEOUT_MS}-${MAX_TIMEOUT_MS}).`,
+                default: 15000,
+                description: 'Timeout in milliseconds.',
               },
             },
             required: ['command'],
@@ -138,14 +156,13 @@ export class FunctionToolManager {
         type: 'function',
         function: {
           name: READ_FILE_TOOL,
-          description:
-            'Read a UTF-8 text file under the project root and return its content.',
+          description: 'Read a text file.',
           parameters: {
             type: 'object',
             properties: {
               path: {
                 type: 'string',
-                description: 'File path relative to project root.',
+                description: 'File path.',
               },
             },
             required: ['path'],
@@ -157,35 +174,81 @@ export class FunctionToolManager {
         type: 'function',
         function: {
           name: EDIT_FILE_TOOL,
-          description:
-            'Create or edit a UTF-8 text file under the project root. Supports replace or append.',
+          description: 'Write or append text to a file.',
           parameters: {
             type: 'object',
             properties: {
               path: {
                 type: 'string',
-                description: 'File path relative to project root.',
+                description: 'File path.',
               },
               content: {
                 type: 'string',
-                description: 'Text content to write or append.',
+                description: 'Text content.',
               },
               mode: {
                 type: 'string',
                 enum: ['replace', 'append'],
-                description: 'Write mode. Defaults to replace.',
+                default: 'replace',
+                description: 'Write mode.',
               },
               create_dirs: {
                 type: 'boolean',
-                description: 'Whether to create parent directories if missing. Defaults to true.',
+                default: true,
+                description: 'Create parent directories.',
               },
               overwrite: {
                 type: 'boolean',
-                description:
-                  'When mode=replace, whether to overwrite existing file. Defaults to true.',
+                default: true,
+                description: 'Overwrite existing file.',
               },
             },
             required: ['path', 'content'],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: PATCH_FILE_TOOL,
+          description: 'Apply line-based patch hunks to a text file.',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: {
+                type: 'string',
+                description: 'File path.',
+              },
+              hunks: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    start_line: {
+                      type: 'integer',
+                      minimum: 1,
+                    },
+                    delete_count: {
+                      type: 'integer',
+                      minimum: 0,
+                    },
+                    insert_lines: {
+                      type: 'array',
+                      items: { type: 'string' },
+                    },
+                  },
+                  required: ['start_line', 'delete_count', 'insert_lines'],
+                  additionalProperties: false,
+                },
+              },
+              strict: {
+                type: 'boolean',
+                default: true,
+                description: 'Strict bounds checking.',
+              },
+            },
+            required: ['path', 'hunks'],
             additionalProperties: false,
           },
         },
@@ -210,6 +273,10 @@ export class FunctionToolManager {
       return await this.callEditTool(rawArgs)
     }
 
+    if (name === PATCH_FILE_TOOL) {
+      return await this.callPatchTool(rawArgs)
+    }
+
     return `Unknown local tool: ${name}`
   }
 
@@ -224,10 +291,7 @@ export class FunctionToolManager {
     }
 
     const requestedCwd = typeof args.cwd === 'string' ? args.cwd.trim() : ''
-    const cwd = this.resolveAndValidatePath(requestedCwd)
-    if (cwd.ok === false) {
-      return cwd.error
-    }
+    const cwd = this.resolvePath(requestedCwd)
 
     const timeoutMs = normalizePositiveInt(
       args.timeout_ms,
@@ -240,7 +304,7 @@ export class FunctionToolManager {
     if (dangerousReason) {
       const approved = await hooks?.confirmDangerousCommand?.({
         command,
-        cwd: cwd.path,
+        cwd,
         reason: dangerousReason,
       })
       if (!approved) {
@@ -250,7 +314,7 @@ export class FunctionToolManager {
 
     const proc = Bun.spawn({
       cmd: ['/bin/sh', '-lc', command],
-      cwd: cwd.path,
+      cwd,
       stdout: 'pipe',
       stderr: 'pipe',
     })
@@ -273,7 +337,7 @@ export class FunctionToolManager {
 
       return [
         `command: ${command}`,
-        `cwd: ${cwd.path}`,
+        `cwd: ${cwd}`,
         `timed_out: ${timedOut}`,
         `exit_code: ${exitCode}`,
         '',
@@ -298,12 +362,9 @@ export class FunctionToolManager {
       return 'Invalid arguments: "path" must be a non-empty string.'
     }
 
-    const resolved = this.resolveAndValidatePath(rawPath)
-    if (resolved.ok === false) {
-      return resolved.error
-    }
+    const resolved = this.resolvePath(rawPath)
 
-    const file = Bun.file(resolved.path)
+    const file = Bun.file(resolved)
     if (!(await file.exists())) {
       return `File not found: ${rawPath}`
     }
@@ -315,6 +376,129 @@ export class FunctionToolManager {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return `Read file failed (${rawPath}): ${message}`
+    }
+  }
+
+  private parsePatchHunks(raw: unknown): ParsedPatchHunk[] | string {
+    if (!Array.isArray(raw)) {
+      return 'Invalid arguments: "hunks" must be an array.'
+    }
+    if (raw.length === 0) {
+      return 'Invalid arguments: "hunks" must not be empty.'
+    }
+    if (raw.length > MAX_PATCH_HUNKS) {
+      return `Invalid arguments: too many hunks (${raw.length}), max is ${MAX_PATCH_HUNKS}.`
+    }
+
+    const parsed: ParsedPatchHunk[] = []
+    for (let idx = 0; idx < raw.length; idx += 1) {
+      const item = raw[idx]
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        return `Invalid hunk at index ${idx}: expected object.`
+      }
+      const obj = item as Record<string, unknown>
+      const startLineRaw = obj.start_line
+      const deleteCountRaw = obj.delete_count
+      const insertLinesRaw = obj.insert_lines
+
+      if (
+        typeof startLineRaw !== 'number' ||
+        !Number.isInteger(startLineRaw) ||
+        startLineRaw < 1
+      ) {
+        return `Invalid hunk at index ${idx}: "start_line" must be an integer >= 1.`
+      }
+      if (
+        typeof deleteCountRaw !== 'number' ||
+        !Number.isInteger(deleteCountRaw) ||
+        deleteCountRaw < 0
+      ) {
+        return `Invalid hunk at index ${idx}: "delete_count" must be an integer >= 0.`
+      }
+
+      const insertLines = asLineArray(insertLinesRaw)
+      if (!insertLines) {
+        return `Invalid hunk at index ${idx}: "insert_lines" must be a string array.`
+      }
+      if (insertLines.some(line => line.includes('\n') || line.includes('\r'))) {
+        return `Invalid hunk at index ${idx}: "insert_lines" entries must not contain newline characters.`
+      }
+
+      parsed.push({
+        startLine: startLineRaw,
+        deleteCount: deleteCountRaw,
+        insertLines,
+      })
+    }
+
+    return parsed
+  }
+
+  private async callPatchTool(rawArgs: unknown): Promise<string> {
+    const args = asObject(rawArgs)
+    const rawPath = typeof args.path === 'string' ? args.path.trim() : ''
+    if (!rawPath) {
+      return 'Invalid arguments: "path" must be a non-empty string.'
+    }
+
+    const parsedHunks = this.parsePatchHunks(args.hunks)
+    if (typeof parsedHunks === 'string') {
+      return parsedHunks
+    }
+    const strict = args.strict !== false
+
+    const resolved = this.resolvePath(rawPath)
+
+    const file = Bun.file(resolved)
+    if (!(await file.exists())) {
+      return `File not found: ${rawPath}`
+    }
+
+    try {
+      const original = await file.text()
+      const normalized = original.replace(/\r\n/g, '\n')
+      const hasTrailingNewline = normalized.endsWith('\n')
+      const body = hasTrailingNewline ? normalized.slice(0, -1) : normalized
+      const lines = body.length === 0 ? [] : body.split('\n')
+
+      // Apply from bottom to top so line numbers stay stable.
+      const hunks = [...parsedHunks].sort(
+        (a, b) => b.startLine - a.startLine || b.deleteCount - a.deleteCount,
+      )
+
+      for (let idx = 0; idx < hunks.length; idx += 1) {
+        const hunk = hunks[idx]
+        const startIndex = hunk.startLine - 1
+        if (startIndex > lines.length) {
+          return `Patch failed at hunk ${idx}: start_line ${hunk.startLine} is out of range (line count ${lines.length}).`
+        }
+
+        const maxDeletable = Math.max(0, lines.length - startIndex)
+        if (strict && hunk.deleteCount > maxDeletable) {
+          return `Patch failed at hunk ${idx}: delete_count ${hunk.deleteCount} exceeds available lines ${maxDeletable}.`
+        }
+
+        const actualDeleteCount = strict
+          ? hunk.deleteCount
+          : Math.min(hunk.deleteCount, maxDeletable)
+
+        lines.splice(startIndex, actualDeleteCount, ...hunk.insertLines)
+      }
+
+      const nextBody = lines.join('\n')
+      const nextContent =
+        hasTrailingNewline && lines.length > 0 ? `${nextBody}\n` : nextBody
+      await Bun.write(resolved, nextContent, { createPath: false })
+
+      return [
+        `path: ${rawPath}`,
+        `hunks_applied: ${hunks.length}`,
+        `strict: ${strict}`,
+        `line_count: ${lines.length}`,
+      ].join('\n')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `Patch failed (${rawPath}): ${message}`
     }
   }
 
@@ -331,12 +515,9 @@ export class FunctionToolManager {
     const createDirs = args.create_dirs !== false
     const overwrite = args.overwrite !== false
 
-    const resolved = this.resolveAndValidatePath(rawPath)
-    if (resolved.ok === false) {
-      return resolved.error
-    }
+    const resolved = this.resolvePath(rawPath)
 
-    const file = Bun.file(resolved.path)
+    const file = Bun.file(resolved)
     const exists = await file.exists()
 
     if (mode === 'replace' && exists && !overwrite) {
@@ -346,10 +527,15 @@ export class FunctionToolManager {
     try {
       const writeOptions = { createPath: createDirs }
       if (mode === 'append') {
-        const previous = exists ? await file.text() : ''
-        await Bun.write(resolved.path, `${previous}${content}`, writeOptions)
+        if (exists) {
+          const stat = await file.stat()
+          const tail = Bun.file(resolved).slice(stat.size)
+          await Bun.write(tail, content)
+        } else {
+          await Bun.write(resolved, content, writeOptions)
+        }
       } else {
-        await Bun.write(resolved.path, content, writeOptions)
+        await Bun.write(resolved, content, writeOptions)
       }
 
       return [
@@ -363,23 +549,15 @@ export class FunctionToolManager {
     }
   }
 
-  private resolveAndValidatePath(
-    input: string,
-  ): { ok: true; path: string } | { ok: false; error: string } {
+  private resolvePath(input: string): string {
     const base = this.projectRoot
     if (!input) {
-      return { ok: true, path: base }
+      return base
     }
 
-    const resolved = path.resolve(base, input)
-    const allowedPrefix = `${base}${path.sep}`
-    if (resolved !== base && !resolved.startsWith(allowedPrefix)) {
-      return {
-        ok: false,
-        error: `Invalid path: "${input}" resolves outside project root.`,
-      }
+    if (path.isAbsolute(input)) {
+      return path.normalize(input)
     }
-
-    return { ok: true, path: resolved }
+    return path.resolve(base, input)
   }
 }

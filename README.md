@@ -102,7 +102,8 @@ MCP 动态开关状态会持久化到 `.agents/mcp.state.json`：
 - `builtin__run`：在项目目录内执行命令并返回 stdout/stderr
 - `builtin__read`：读取项目目录内文本文件
 - `builtin__edit`：写入/追加项目目录内文本文件
-- 所有路径都限制在当前项目根目录内，避免越界访问
+- `builtin__patch`：按 `start_line + delete_count + insert_lines` 批量打补丁
+- 支持绝对路径和相对路径（相对路径基于进程启动目录）
 - `builtin__run` 可通过 `timeout_ms` 控制单次执行超时
 - `builtin__run` 高风险命令（如含 `rm`/`mkfs`/`dd`/`sudo` 等）会在 Discord 弹出 `Yes/No` 按钮确认，只有原请求用户可批准执行
 ## 7. Skills 配置

@@ -412,7 +412,8 @@ async function askWithChat(
       )
     }
 
-    for (const call of toolCalls) {
+    for (let callIndex = 0; callIndex < toolCalls.length; callIndex += 1) {
+      const call = toolCalls[callIndex]
       if (call.type !== 'function') {
         continue
       }
@@ -696,8 +697,21 @@ async function registerSlashCommands(
 }
 
 async function run(): Promise<void> {
-  const mcpLoad = await mcpTools.loadFromConfig()
-  const skillLoad = await skillManager.loadFromConfigDir()
+  let mcpLoad
+  try {
+    mcpLoad = await mcpTools.loadFromConfig()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`MCP initialization failed: ${message}`)
+  }
+
+  let skillLoad
+  try {
+    skillLoad = await skillManager.loadFromConfigDir()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Skills initialization failed: ${message}`)
+  }
 
   const discordClient = new DiscordClient({
     intents: [
@@ -764,7 +778,12 @@ async function run(): Promise<void> {
     void handleSlashCommand(interaction)
   })
 
-  await discordClient.login(botToken)
+  try {
+    await discordClient.login(botToken)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Discord login failed: ${message}`)
+  }
 }
 
 run().catch(error => {

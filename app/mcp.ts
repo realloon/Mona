@@ -342,7 +342,7 @@ export class McpToolManager {
         name: tool.openaiToolName,
         description:
           tool.description?.trim() ||
-          `MCP tool ${tool.mcpServerName}/${tool.mcpToolName}`,
+          `Call MCP tool ${tool.mcpServerName}/${tool.mcpToolName}.`,
         parameters:
           tool.inputSchema &&
           typeof tool.inputSchema === 'object' &&
