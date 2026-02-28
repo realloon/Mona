@@ -1,6 +1,11 @@
 import OpenAI from 'openai'
 import { env } from 'bun'
 import {
+  ActionRowBuilder,
+  ApplicationCommandOptionType,
+  ButtonBuilder,
+  ButtonStyle,
+  type ButtonInteraction,
   type ChatInputCommandInteraction,
   Client as DiscordClient,
   GatewayIntentBits,
@@ -10,6 +15,10 @@ import {
 } from 'discord.js'
 import { McpToolManager, parseToolArguments } from './mcp.js'
 import { SkillManager } from './skills.js'
+import {
+  type DangerousCommandRequest,
+  FunctionToolManager,
+} from './function-tools.js'
 
 type Role = 'user' | 'assistant'
 type Turn = {
@@ -22,6 +31,13 @@ type SessionState = {
 type SendableChannel = {
   sendTyping: () => Promise<unknown>
   send: (content: string) => Promise<unknown>
+}
+type PendingApproval = {
+  requesterUserId: string
+  resolve: (approved: boolean) => void
+  timeout: ReturnType<typeof setTimeout>
+  promptMessageId: string
+  commandPreview: string
 }
 
 const apiKey = env.OPENAI_API_KEY
@@ -40,6 +56,10 @@ const baseURL = env.OPENAI_BASE_URL
 const client = new OpenAI({ apiKey, baseURL })
 
 const maxHistoryMessages = Number.parseInt(env.MAX_HISTORY_MESSAGES ?? '20', 10)
+const terminalApprovalTimeoutMs = Number.parseInt(
+  env.TERMINAL_APPROVAL_TIMEOUT_MS ?? '30000',
+  10,
+)
 
 const model = env.OPENAI_MODEL ?? 'gpt-4o-mini'
 const systemPrompt = env.SYSTEM_PROMPT ?? 'You are a helpful assistant.'
@@ -54,6 +74,8 @@ const allowedChannelIds = new Set(
 )
 
 const sessions = new Map<string, SessionState>()
+const pendingApprovals = new Map<string, PendingApproval>()
+const approvalCustomIdPrefix = 'builtin-run-approval'
 const slashCommands = [
   {
     name: 'clear',
@@ -63,9 +85,54 @@ const slashCommands = [
     name: 'skills',
     description: 'List loaded skills',
   },
+  {
+    name: 'mcp',
+    description: 'Manage MCP servers',
+    options: [
+      {
+        type: ApplicationCommandOptionType.Subcommand as const,
+        name: 'list',
+        description: 'List MCP server states',
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand as const,
+        name: 'enable',
+        description: 'Enable one MCP server',
+        options: [
+          {
+            type: ApplicationCommandOptionType.String as const,
+            name: 'server',
+            description: 'MCP server name in .agents/mcp.json',
+            required: true,
+          },
+        ],
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand as const,
+        name: 'disable',
+        description: 'Disable one MCP server',
+        options: [
+          {
+            type: ApplicationCommandOptionType.String as const,
+            name: 'server',
+            description: 'MCP server name in .agents/mcp.json',
+            required: true,
+          },
+        ],
+      },
+    ],
+  },
 ]
 const mcpTools = new McpToolManager()
 const skillManager = new SkillManager()
+const functionTools = new FunctionToolManager({
+  projectRoot: process.cwd(),
+  defaultTimeoutMs: Number.parseInt(env.TERMINAL_TOOL_TIMEOUT_MS ?? '15000', 10),
+  maxOutputChars: Number.parseInt(
+    env.TERMINAL_TOOL_MAX_OUTPUT_CHARS ?? '12000',
+    10,
+  ),
+})
 
 function formatRequestError(error: unknown): string {
   if (!(error instanceof Error)) {
@@ -95,6 +162,153 @@ function formatRequestError(error: unknown): string {
   }
 
   return parts.join(' | ')
+}
+
+function clampPositiveInt(value: number, fallback: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return fallback
+  }
+  return Math.floor(value)
+}
+
+function truncatePreview(input: string, max = 240): string {
+  const clean = input.replace(/\s+/g, ' ').trim()
+  if (clean.length <= max) {
+    return clean
+  }
+  return `${clean.slice(0, max - 15)}...(truncated)`
+}
+
+function buildApprovalCustomId(id: string, decision: 'yes' | 'no'): string {
+  return `${approvalCustomIdPrefix}:${id}:${decision}`
+}
+
+function parseApprovalCustomId(
+  customId: string,
+): { approvalId: string; decision: 'yes' | 'no' } | null {
+  const parts = customId.split(':')
+  if (
+    parts.length !== 3 ||
+    parts[0] !== approvalCustomIdPrefix ||
+    !parts[1] ||
+    (parts[2] !== 'yes' && parts[2] !== 'no')
+  ) {
+    return null
+  }
+
+  return {
+    approvalId: parts[1],
+    decision: parts[2],
+  }
+}
+
+function buildApprovalComponents(approvalId: string) {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(buildApprovalCustomId(approvalId, 'yes'))
+        .setLabel('Yes')
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId(buildApprovalCustomId(approvalId, 'no'))
+        .setLabel('No')
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ]
+}
+
+async function requestDangerousCommandApproval(
+  message: Message,
+  request: DangerousCommandRequest,
+): Promise<boolean> {
+  const approvalId = crypto.randomUUID().replace(/-/g, '').slice(0, 16)
+  const timeoutMs = clampPositiveInt(terminalApprovalTimeoutMs, 30000)
+  const commandPreview = truncatePreview(request.command, 280)
+
+  const prompt = await message.reply({
+    content: [
+      'Dangerous command needs confirmation.',
+      `Reason: ${request.reason}`,
+      `cwd: ${request.cwd}`,
+      `command: \`${commandPreview}\``,
+      'Approve this execution?',
+    ].join('\n'),
+    components: buildApprovalComponents(approvalId),
+    allowedMentions: { repliedUser: false },
+  })
+
+  return await new Promise<boolean>(resolve => {
+    const timeout = setTimeout(() => {
+      const pending = pendingApprovals.get(approvalId)
+      if (!pending) {
+        return
+      }
+      pendingApprovals.delete(approvalId)
+      pending.resolve(false)
+      void prompt.edit({
+        content: [
+          'Dangerous command approval timed out.',
+          `command: \`${pending.commandPreview}\``,
+        ].join('\n'),
+        components: [],
+      })
+    }, timeoutMs)
+
+    pendingApprovals.set(approvalId, {
+      requesterUserId: message.author.id,
+      resolve,
+      timeout,
+      promptMessageId: prompt.id,
+      commandPreview,
+    })
+  })
+}
+
+async function handleApprovalButton(
+  interaction: ButtonInteraction,
+): Promise<void> {
+  const parsed = parseApprovalCustomId(interaction.customId)
+  if (!parsed) {
+    return
+  }
+
+  const pending = pendingApprovals.get(parsed.approvalId)
+  if (!pending) {
+    await interaction.reply({
+      content: 'This approval request has expired.',
+      flags: MessageFlags.Ephemeral,
+    })
+    return
+  }
+
+  if (pending.promptMessageId !== interaction.message.id) {
+    await interaction.reply({
+      content: 'Approval message mismatch.',
+      flags: MessageFlags.Ephemeral,
+    })
+    return
+  }
+
+  if (interaction.user.id !== pending.requesterUserId) {
+    await interaction.reply({
+      content: 'Only the original requester can approve this command.',
+      flags: MessageFlags.Ephemeral,
+    })
+    return
+  }
+
+  clearTimeout(pending.timeout)
+  pendingApprovals.delete(parsed.approvalId)
+
+  const approved = parsed.decision === 'yes'
+  pending.resolve(approved)
+
+  await interaction.update({
+    content: approved
+      ? `Dangerous command approved.\ncommand: \`${pending.commandPreview}\``
+      : `Dangerous command rejected.\ncommand: \`${pending.commandPreview}\``,
+    components: [],
+  })
 }
 
 function contentToText(content: unknown): string {
@@ -155,6 +369,7 @@ function clearSession(sessionId: string): boolean {
 async function askWithChat(
   session: SessionState,
   userInput: string,
+  dangerousCommandApproval?: (request: DangerousCommandRequest) => Promise<boolean>,
 ): Promise<string> {
   const skillInstruction = skillManager.buildSkillInstruction(userInput)
   const combinedSystemPrompt = skillInstruction
@@ -169,7 +384,7 @@ async function askWithChat(
     })),
   ]
 
-  const tools = mcpTools.getOpenAITools()
+  const tools = [...mcpTools.getOpenAITools(), ...functionTools.getOpenAITools()]
   const maxToolRounds = 6
 
   for (let round = 0; round < maxToolRounds; round += 1) {
@@ -204,7 +419,16 @@ async function askWithChat(
         continue
       }
       const args = parseToolArguments(call.function.arguments ?? '')
-      const toolResult = await mcpTools.callOpenAITool(call.function.name, args)
+      let toolResult: string
+      if (mcpTools.hasOpenAITool(call.function.name)) {
+        toolResult = await mcpTools.callOpenAITool(call.function.name, args)
+      } else if (functionTools.hasOpenAITool(call.function.name)) {
+        toolResult = await functionTools.callOpenAITool(call.function.name, args, {
+          confirmDangerousCommand: dangerousCommandApproval,
+        })
+      } else {
+        toolResult = `Unknown tool: ${call.function.name}`
+      }
       messages.push({
         role: 'tool',
         tool_call_id: call.id,
@@ -219,13 +443,18 @@ async function askWithChat(
 async function generateReply(
   sessionId: string,
   userInput: string,
+  dangerousCommandApproval?: (request: DangerousCommandRequest) => Promise<boolean>,
 ): Promise<{ answer: string }> {
   const session = getSession(sessionId)
   session.turns.push({ role: 'user', content: userInput })
   session.turns = trimHistory(session.turns)
 
   try {
-    const answer = await askWithChat(session, userInput)
+    const answer = await askWithChat(
+      session,
+      userInput,
+      dangerousCommandApproval,
+    )
     session.turns.push({ role: 'assistant', content: answer })
     session.turns = trimHistory(session.turns)
     return { answer }
@@ -318,7 +547,11 @@ async function handleMessage(
 
   try {
     await channel.sendTyping()
-    const { answer } = await generateReply(sessionId, userInput)
+    const { answer } = await generateReply(
+      sessionId,
+      userInput,
+      async request => requestDangerousCommandApproval(message, request),
+    )
 
     const chunks = splitDiscordMessage(answer)
     for (let idx = 0; idx < chunks.length; idx += 1) {
@@ -345,6 +578,73 @@ async function handleMessage(
 async function handleSlashCommand(
   interaction: ChatInputCommandInteraction,
 ): Promise<void> {
+  if (interaction.commandName === 'mcp') {
+    const subcommand = interaction.options.getSubcommand()
+
+    if (subcommand === 'list') {
+      const states = mcpTools.getServerStates()
+      const content =
+        states.length === 0
+          ? 'No MCP servers configured in .agents/mcp.json.'
+          : [
+              `MCP runtime: ${mcpTools.getRuntimeSummary()}`,
+              ...states.map(state =>
+                `- ${state.name}: ${state.enabled ? 'enabled' : 'disabled'} (${state.toolCount} tools)`,
+              ),
+            ].join('\n')
+
+      await interaction.reply({
+        content,
+        flags: MessageFlags.Ephemeral,
+      })
+      return
+    }
+
+    const server = interaction.options.getString('server', true).trim()
+    if (!server) {
+      await interaction.reply({
+        content: 'Missing server name.',
+        flags: MessageFlags.Ephemeral,
+      })
+      return
+    }
+
+    if (!mcpTools.isConfigured(server)) {
+      await interaction.reply({
+        content: `MCP server "${server}" is not configured in .agents/mcp.json.`,
+        flags: MessageFlags.Ephemeral,
+      })
+      return
+    }
+
+    try {
+      if (subcommand === 'enable') {
+        await mcpTools.enableServer(server)
+        await interaction.reply({
+          content: `Enabled MCP server "${server}". Runtime: ${mcpTools.getRuntimeSummary()}`,
+          flags: MessageFlags.Ephemeral,
+        })
+        return
+      }
+
+      if (subcommand === 'disable') {
+        await mcpTools.disableServer(server)
+        await interaction.reply({
+          content: `Disabled MCP server "${server}". Runtime: ${mcpTools.getRuntimeSummary()}`,
+          flags: MessageFlags.Ephemeral,
+        })
+        return
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await interaction.reply({
+        content: `MCP operation failed: ${message}`,
+        flags: MessageFlags.Ephemeral,
+      })
+      return
+    }
+  }
+
   if (interaction.commandName === 'skills') {
     const summaries = skillManager.getSummaries()
     const content =
@@ -438,10 +738,11 @@ async function run(): Promise<void> {
       } else {
         console.log('MCP: disabled (missing .agents/mcp.json or no servers)')
       }
-      if (skillLoad.configured) {
+      console.log(functionTools.getStatusSummary())
+      if (skillLoad.loadedSkills > 0) {
         console.log(`Skills: ${skillLoad.loadedSkills} loaded`)
       } else {
-        console.log('Skills: disabled (missing .agents/skills)')
+        console.log('Skills: 0 loaded')
       }
     })().catch(error => {
       const message = error instanceof Error ? error.message : String(error)
@@ -454,6 +755,11 @@ async function run(): Promise<void> {
   })
 
   discordClient.on('interactionCreate', interaction => {
+    if (interaction.isButton()) {
+      void handleApprovalButton(interaction)
+      return
+    }
+
     if (!interaction.isChatInputCommand()) {
       return
     }

@@ -27,17 +27,19 @@ function parseFrontmatter(content: string): {
   metadata: Record<string, string>
   body: string
 } {
-  if (!content.startsWith('---\n')) {
-    return { metadata: {}, body: content }
+  const normalized = content.replace(/\r\n/g, '\n')
+
+  if (!normalized.startsWith('---\n')) {
+    return { metadata: {}, body: normalized }
   }
 
-  const end = content.indexOf('\n---\n', 4)
+  const end = normalized.indexOf('\n---\n', 4)
   if (end < 0) {
-    return { metadata: {}, body: content }
+    return { metadata: {}, body: normalized }
   }
 
-  const rawMeta = content.slice(4, end)
-  const body = content.slice(end + 5)
+  const rawMeta = normalized.slice(4, end)
+  const body = normalized.slice(end + 5)
   const metadata: Record<string, string> = {}
 
   for (const line of rawMeta.split('\n')) {
@@ -90,38 +92,44 @@ export class SkillManager {
 
   async loadFromConfigDir(): Promise<SkillLoadResult> {
     const skillsRoot = `${process.cwd()}/.agents/skills`
-    if (!(await Bun.file(skillsRoot).exists())) {
-      return { configured: false, loadedSkills: 0 }
-    }
+    this.skills.length = 0
 
     const glob = new Bun.Glob('**/SKILL.md')
-    for await (const relativePath of glob.scan({ cwd: skillsRoot })) {
-      const absolutePath = `${skillsRoot}/${relativePath}`
-      const raw = (await Bun.file(absolutePath).text()).trim()
-      if (!raw) {
-        continue
+    try {
+      for await (const relativePath of glob.scan({ cwd: skillsRoot })) {
+        const absolutePath = `${skillsRoot}/${relativePath}`
+        const raw = (await Bun.file(absolutePath).text()).trim()
+        if (!raw) {
+          continue
+        }
+
+        const { metadata, body } = parseFrontmatter(raw)
+        const folderName = relativePath.split('/')[0] ?? relativePath
+        const id = normalizeToken(metadata.name || folderName) || folderName
+        const name = metadata.name?.trim() || folderName
+        const description = metadata.description?.trim()
+
+        const aliases = dedupe([
+          normalizeToken(id),
+          normalizeToken(name),
+          normalizeToken(folderName),
+        ]).filter(Boolean)
+
+        this.skills.push({
+          id,
+          name,
+          description,
+          path: absolutePath,
+          content: body.trim(),
+          aliases,
+        })
       }
-
-      const { metadata, body } = parseFrontmatter(raw)
-      const folderName = relativePath.split('/')[0] ?? relativePath
-      const id = normalizeToken(metadata.name || folderName) || folderName
-      const name = metadata.name?.trim() || folderName
-      const description = metadata.description?.trim()
-
-      const aliases = dedupe([
-        normalizeToken(id),
-        normalizeToken(name),
-        normalizeToken(folderName),
-      ]).filter(Boolean)
-
-      this.skills.push({
-        id,
-        name,
-        description,
-        path: absolutePath,
-        content: body.trim(),
-        aliases,
-      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (message.includes('ENOENT')) {
+        return { configured: false, loadedSkills: 0 }
+      }
+      throw error
     }
 
     return {

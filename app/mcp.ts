@@ -2,6 +2,8 @@ import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import { mkdir } from 'node:fs/promises'
+import path from 'node:path'
 
 type McpServerConfig = {
   url?: string
@@ -33,6 +35,16 @@ type McpLoadResult = {
   configured: boolean
   loadedServers: number
   loadedTools: number
+}
+
+type McpServerState = {
+  name: string
+  enabled: boolean
+  toolCount: number
+}
+
+type PersistedMcpState = {
+  disabledServers: string[]
 }
 
 function sanitizeName(name: string): string {
@@ -142,6 +154,49 @@ async function readMcpServersFromConfigFile(): Promise<{
   }
 }
 
+function getMcpStateFilePath(): string {
+  return `${process.cwd()}/.agents/mcp.state.json`
+}
+
+function normalizePersistedState(raw: unknown): PersistedMcpState {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { disabledServers: [] }
+  }
+
+  const obj = raw as { disabledServers?: unknown }
+  const disabledServers = Array.isArray(obj.disabledServers)
+    ? obj.disabledServers.filter(v => typeof v === 'string')
+    : []
+
+  return {
+    disabledServers: Array.from(new Set(disabledServers)),
+  }
+}
+
+async function readMcpStateFile(): Promise<PersistedMcpState> {
+  const statePath = getMcpStateFilePath()
+  const stateFile = Bun.file(statePath)
+  if (!(await stateFile.exists())) {
+    return { disabledServers: [] }
+  }
+
+  try {
+    const raw = await stateFile.text()
+    const parsed = JSON.parse(raw)
+    return normalizePersistedState(parsed)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Failed to parse MCP state file ${statePath}: ${message}`)
+  }
+}
+
+async function writeMcpStateFile(state: PersistedMcpState): Promise<void> {
+  const statePath = getMcpStateFilePath()
+  await mkdir(path.dirname(statePath), { recursive: true })
+  const content = `${JSON.stringify(state, null, 2)}\n`
+  await Bun.write(statePath, content)
+}
+
 function normalizeToolContent(result: unknown): string {
   if (!result || typeof result !== 'object') {
     return String(result ?? '')
@@ -186,6 +241,8 @@ function normalizeToolContent(result: unknown): string {
 }
 
 export class McpToolManager {
+  private configuredServers = new Map<string, McpServerConfig>()
+  private disabledServers = new Set<string>()
   private readonly serverClients = new Map<string, McpClient>()
   private readonly serverTransports = new Map<string, Transport>()
   private readonly toolsByOpenAIName = new Map<string, McpToolBinding>()
@@ -198,15 +255,58 @@ export class McpToolManager {
     return this.toolsByOpenAIName.size
   }
 
+  hasOpenAITool(name: string): boolean {
+    return this.toolsByOpenAIName.has(name)
+  }
+
+  isConfigured(serverName: string): boolean {
+    return this.configuredServers.has(serverName)
+  }
+
+  isEnabled(serverName: string): boolean {
+    return this.serverClients.has(serverName)
+  }
+
+  getServerStates(): McpServerState[] {
+    const states: McpServerState[] = []
+    for (const name of this.configuredServers.keys()) {
+      states.push({
+        name,
+        enabled: this.isEnabled(name),
+        toolCount: this.getToolCountForServer(name),
+      })
+    }
+    return states.sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  getRuntimeSummary(): string {
+    return `${this.serverClients.size} servers enabled, ${this.toolsByOpenAIName.size} tools loaded`
+  }
+
   async loadFromConfig(): Promise<McpLoadResult> {
+    await this.closeAll()
+
     const { servers } = await readMcpServersFromConfigFile()
     const entries = Object.entries(servers)
+    this.configuredServers = new Map(entries)
+    this.disabledServers.clear()
+
+    const persisted = await readMcpStateFile()
+    for (const name of persisted.disabledServers) {
+      if (this.configuredServers.has(name)) {
+        this.disabledServers.add(name)
+      }
+    }
+
     if (entries.length === 0) {
       return { configured: false, loadedServers: 0, loadedTools: 0 }
     }
 
-    for (const [serverName, config] of entries) {
-      await this.connectServer(serverName, config)
+    for (const [serverName] of entries) {
+      if (this.disabledServers.has(serverName)) {
+        continue
+      }
+      await this.enableServer(serverName)
     }
 
     return {
@@ -216,18 +316,34 @@ export class McpToolManager {
     }
   }
 
-  async closeAll(): Promise<void> {
-    for (const [name, transport] of this.serverTransports) {
-      try {
-        await transport.close()
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        console.error(`Failed to close MCP transport ${name}: ${message}`)
-      }
+  async enableServer(serverName: string): Promise<void> {
+    const config = this.configuredServers.get(serverName)
+    if (!config) {
+      throw new Error(`MCP server "${serverName}" is not configured.`)
     }
-    this.serverTransports.clear()
-    this.serverClients.clear()
-    this.toolsByOpenAIName.clear()
+    this.disabledServers.delete(serverName)
+    if (this.serverClients.has(serverName)) {
+      await this.persistState()
+      return
+    }
+    await this.connectServer(serverName, config)
+    await this.persistState()
+  }
+
+  async disableServer(serverName: string): Promise<void> {
+    if (!this.configuredServers.has(serverName)) {
+      throw new Error(`MCP server "${serverName}" is not configured.`)
+    }
+    this.disabledServers.add(serverName)
+    await this.disconnectServer(serverName)
+    await this.persistState()
+  }
+
+  async closeAll(): Promise<void> {
+    const names = Array.from(this.serverTransports.keys())
+    for (const name of names) {
+      await this.disconnectServer(name)
+    }
   }
 
   getOpenAITools(): OpenAIFunctionTool[] {
@@ -313,11 +429,52 @@ export class McpToolManager {
     }
   }
 
+  private async disconnectServer(serverName: string): Promise<void> {
+    const transport = this.serverTransports.get(serverName)
+    if (!transport) {
+      return
+    }
+
+    try {
+      await transport.close()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`Failed to close MCP transport ${serverName}: ${message}`)
+    }
+
+    this.serverTransports.delete(serverName)
+    this.serverClients.delete(serverName)
+
+    for (const [openaiName, binding] of this.toolsByOpenAIName) {
+      if (binding.mcpServerName === serverName) {
+        this.toolsByOpenAIName.delete(openaiName)
+      }
+    }
+  }
+
+  private getToolCountForServer(serverName: string): number {
+    let count = 0
+    for (const binding of this.toolsByOpenAIName.values()) {
+      if (binding.mcpServerName === serverName) {
+        count += 1
+      }
+    }
+    return count
+  }
+
+  private async persistState(): Promise<void> {
+    const disabledServers = Array.from(this.disabledServers)
+      .filter(name => this.configuredServers.has(name))
+      .sort((a, b) => a.localeCompare(b))
+
+    await writeMcpStateFile({ disabledServers })
+  }
+
   private buildUniqueOpenAIToolName(
     serverName: string,
     toolName: string,
   ): string {
-    const base = `mcp_${sanitizeName(serverName)}_${sanitizeName(toolName)}`
+    const base = `${sanitizeName(serverName)}__${sanitizeName(toolName)}`
     const maxLen = 64
     let candidate = base.slice(0, maxLen)
     let suffix = 1
