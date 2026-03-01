@@ -17,7 +17,7 @@ export type TaskCreateApprovalRequest = {
   name: string
   channelId: string
   scheduleSummary: string
-  actionSummary: string
+  promptSummary: string
   nextRunAt: string
 }
 

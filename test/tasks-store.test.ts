@@ -18,14 +18,13 @@ describe('task store normalization', () => {
     }
   })
 
-  test('keeps normalization strict when action is missing', async () => {
+  test('keeps normalization strict when prompt is missing', async () => {
     const payload = {
       tasks: [
         {
           id: 'task_invalid_1',
           name: 'invalid-task',
           schedule: { kind: 'once_delay', minutes: 5 },
-          prompt: 'missing-action-should-fail',
           next_run_at: '2026-03-02T00:00:00.000Z',
         },
       ],
@@ -46,7 +45,8 @@ describe('task store normalization', () => {
           id: 'task_valid_1',
           name: 'valid-task',
           schedule: { kind: 'once_delay', minutes: 5 },
-          action: { type: 'llm', prompt: 'send summary' },
+          prompt: 'send summary',
+          model: 'gpt-4o-mini',
           enabled: true,
           channel_id: 'channel-1',
           creator_user_id: 'user-1',
@@ -64,6 +64,7 @@ describe('task store normalization', () => {
     const store = await readTaskStoreFromProjectRoot(sandboxDir)
     expect(store.tasks.length).toBe(1)
     expect(store.tasks[0]?.id).toBe('task_valid_1')
-    expect(store.tasks[0]?.action.type).toBe('llm')
+    expect(store.tasks[0]?.prompt).toBe('send summary')
+    expect(store.tasks[0]?.model).toBe('gpt-4o-mini')
   })
 })

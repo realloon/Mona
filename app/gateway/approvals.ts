@@ -176,7 +176,7 @@ export function createApprovalHandlers(
       `name: ${request.name}`,
       `channel_id: ${request.channelId}`,
       `schedule: ${request.scheduleSummary}`,
-      `action: ${request.actionSummary}`,
+      `prompt: ${request.promptSummary}`,
       `next_run_at: ${request.nextRunAt}`,
     ].join('\n')
 

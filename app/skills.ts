@@ -3,7 +3,7 @@ import { file, Glob } from 'bun'
 type LoadedSkill = {
   id: string
   name: string
-  description?: string
+  description: string
   path: string
   aliases: string[]
 }
@@ -16,7 +16,7 @@ type SkillLoadResult = {
 type SkillSummary = {
   id: string
   name: string
-  description?: string
+  description: string
 }
 
 type SkillPromptMetadata = SkillSummary & {
@@ -130,6 +130,11 @@ export class SkillManager {
         const id = normalizeToken(metadata.name || folderName) || folderName
         const name = metadata.name?.trim() || folderName
         const description = metadata.description?.trim()
+        if (!description) {
+          throw new Error(
+            `Skill description is required in frontmatter: ${absolutePath}`,
+          )
+        }
 
         const aliases = dedupe([
           normalizeToken(id),
@@ -186,7 +191,7 @@ export class SkillManager {
         '  <skill>',
         `    <id>${escapeXml(skill.id)}</id>`,
         `    <name>${escapeXml(skill.name)}</name>`,
-        `    <description>${escapeXml(skill.description ?? '')}</description>`,
+        `    <description>${escapeXml(skill.description)}</description>`,
         `    <location>${escapeXml(skill.path)}</location>`,
         '  </skill>',
       ].join('\n'),
@@ -262,7 +267,7 @@ export class SkillManager {
       if (!content) {
         continue
       }
-      const header = `Skill: ${skill.name}${skill.description ? ` - ${skill.description}` : ''}`
+      const header = `Skill: ${skill.name} - ${skill.description}`
       blocks.push(`${header}\n${content}`)
     }
 

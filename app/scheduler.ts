@@ -239,12 +239,8 @@ export class TaskScheduler {
   }
 
   private async executeTask(task: TaskRecord): Promise<string> {
-    if (task.action.type === 'message') {
-      return task.action.content
-    }
-
     const completion = await this.openaiClient.chat.completions.create({
-      model: task.action.model || this.defaultModel,
+      model: task.model || this.defaultModel,
       messages: [
         {
           role: 'system',
@@ -258,7 +254,7 @@ export class TaskScheduler {
         },
         {
           role: 'user',
-          content: task.action.prompt,
+          content: task.prompt,
         },
       ] as never,
     })

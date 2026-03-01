@@ -165,11 +165,7 @@ export function createSlashCommandHandler(options: CreateSlashCommandHandlerOpti
         summaries.length === 0
           ? 'No skills loaded from .agents/skills.'
           : summaries
-              .map(skill =>
-                skill.description
-                  ? `- ${skill.name} (${skill.id}): ${skill.description}`
-                  : `- ${skill.name} (${skill.id})`,
-              )
+              .map(skill => `- ${skill.name} (${skill.id}): ${skill.description}`)
               .join('\n')
 
       await interaction.reply({

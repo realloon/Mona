@@ -30,17 +30,6 @@ export type DailyAtSchedule = {
 
 export type TaskSchedule = OnceDelaySchedule | DailyAtSchedule
 
-export type TaskAction =
-  | {
-      type: 'message'
-      content: string
-    }
-  | {
-      type: 'llm'
-      prompt: string
-      model?: string
-    }
-
 export type TaskLastStatus = 'idle' | 'running' | 'success' | 'failed'
 
 export type TaskRecord = {
@@ -50,7 +39,8 @@ export type TaskRecord = {
   channel_id: string
   creator_user_id: string
   schedule: TaskSchedule
-  action: TaskAction
+  prompt: string
+  model?: string
   next_run_at: string
   last_run_started_at: string | null
   last_run_at: string | null
@@ -69,7 +59,7 @@ export const TASK_CREATE_TOOL_SCHEMA: OpenAIFunctionTool = {
   function: {
     name: TASK_CREATE_TOOL,
     description:
-      'Create a scheduled task persisted in .agents/tasks.json. Requires action. Supports "五分钟后" and "每天早上6点".',
+      'Create a scheduled LLM task persisted in .agents/tasks.json. Requires prompt. Supports "五分钟后" and "每天早上6点".',
     parameters: {
       type: 'object',
       properties: {
@@ -122,28 +112,13 @@ export const TASK_CREATE_TOOL_SCHEMA: OpenAIFunctionTool = {
           },
           additionalProperties: false,
         },
-        action: {
-          type: 'object',
-          description: 'Task action to execute at runtime.',
-          properties: {
-            type: {
-              type: 'string',
-              enum: ['message', 'llm'],
-            },
-            content: {
-              type: 'string',
-              description: 'Required for message action.',
-            },
-            prompt: {
-              type: 'string',
-              description: 'Required for llm action.',
-            },
-            model: {
-              type: 'string',
-              description: 'Optional override model for llm action.',
-            },
-          },
-          additionalProperties: false,
+        prompt: {
+          type: 'string',
+          description: 'LLM prompt to execute at runtime.',
+        },
+        model: {
+          type: 'string',
+          description: 'Optional override model for this task.',
         },
         enabled: {
           type: 'boolean',
@@ -155,7 +130,7 @@ export const TASK_CREATE_TOOL_SCHEMA: OpenAIFunctionTool = {
             `Timezone for daily schedules. Current runtime supports local timezone only (${LOCAL_TIMEZONE}).`,
         },
       },
-      required: ['name', 'action'],
+      required: ['name', 'prompt'],
       additionalProperties: false,
     },
   },
@@ -540,57 +515,25 @@ function parseScheduleFromArgs(
   }
 }
 
-function parseActionFromArgs(rawArgs: unknown): {
-  action?: TaskAction
+function parsePromptFromArgs(rawArgs: unknown): {
+  prompt?: string
+  model?: string
   error?: string
 } {
   const args = asObject(rawArgs)
-  if (args.action === undefined) {
-    return { error: 'Missing action: provide "action".' }
+  const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : ''
+  if (!prompt) {
+    return { error: 'Missing prompt: provide non-empty "prompt".' }
   }
 
-  const actionObj = asObject(args.action)
-  const type = typeof actionObj.type === 'string' ? actionObj.type.trim() : ''
-  if (type === 'message') {
-    const content =
-      typeof actionObj.content === 'string' ? actionObj.content.trim() : ''
-    if (!content) {
-      return {
-        error:
-          'Invalid action: "action.content" must be non-empty for message action.',
-      }
-    }
-    return {
-      action: {
-        type: 'message',
-        content,
-      },
-    }
-  }
-
-  if (type === 'llm') {
-    const prompt =
-      typeof actionObj.prompt === 'string' ? actionObj.prompt.trim() : ''
-    if (!prompt) {
-      return {
-        error: 'Invalid action: "action.prompt" must be non-empty for llm action.',
-      }
-    }
-    const model =
-      typeof actionObj.model === 'string' && actionObj.model.trim()
-        ? actionObj.model.trim()
-        : undefined
-    return {
-      action: {
-        type: 'llm',
-        prompt,
-        ...(model ? { model } : {}),
-      },
-    }
-  }
+  const model =
+    typeof args.model === 'string' && args.model.trim()
+      ? args.model.trim()
+      : undefined
 
   return {
-    error: 'Invalid action: "action.type" must be "message" or "llm".',
+    prompt,
+    ...(model ? { model } : {}),
   }
 }
 
@@ -630,11 +573,15 @@ function normalizeTaskRecord(raw: unknown): TaskRecord | null {
     return null
   }
 
-  const actionParsed = parseActionFromArgs({ action: obj.action })
-  const action = actionParsed.action ?? null
-  if (!action) {
+  const prompt =
+    typeof obj.prompt === 'string' ? obj.prompt.trim() : ''
+  if (!prompt) {
     return null
   }
+  const model =
+    typeof obj.model === 'string' && obj.model.trim()
+      ? obj.model.trim()
+      : undefined
 
   const now = new Date()
   const nextRunAtRaw = parseDateOrNull(obj.next_run_at)
@@ -654,7 +601,8 @@ function normalizeTaskRecord(raw: unknown): TaskRecord | null {
     creator_user_id:
       typeof obj.creator_user_id === 'string' ? obj.creator_user_id.trim() : '',
     schedule: scheduleParsed.schedule,
-    action,
+    prompt,
+    ...(model ? { model } : {}),
     next_run_at: nextRunAt,
     last_run_started_at: parseDateOrNull(obj.last_run_started_at),
     last_run_at: parseDateOrNull(obj.last_run_at),
@@ -797,9 +745,9 @@ export async function callTaskCreateTool(
   const creatorUserId =
     creatorUserIdRaw || hooks?.taskContext?.requesterUserId || ''
 
-  const actionParsed = parseActionFromArgs(args)
-  if (!actionParsed.action) {
-    return `Invalid action: ${actionParsed.error ?? 'unknown error'}`
+  const promptParsed = parsePromptFromArgs(args)
+  if (!promptParsed.prompt) {
+    return `Invalid prompt: ${promptParsed.error ?? 'unknown error'}`
   }
 
   const enabled = args.enabled !== false
@@ -818,10 +766,7 @@ export async function callTaskCreateTool(
       name,
       channelId: channelId || '(missing)',
       scheduleSummary: formatSchedule(parsedSchedule.schedule),
-      actionSummary:
-        actionParsed.action.type === 'message'
-          ? `message: ${truncatePreview(actionParsed.action.content)}`
-          : `llm: ${truncatePreview(actionParsed.action.prompt)}`,
+      promptSummary: `llm: ${truncatePreview(promptParsed.prompt)}`,
       nextRunAt: nextRunAt.toISOString(),
     })
     if (!approved) {
@@ -845,7 +790,8 @@ export async function callTaskCreateTool(
     channel_id: channelId,
     creator_user_id: creatorUserId,
     schedule: parsedSchedule.schedule,
-    action: actionParsed.action,
+    prompt: promptParsed.prompt,
+    ...(promptParsed.model ? { model: promptParsed.model } : {}),
     next_run_at: nextRunAt.toISOString(),
     last_run_started_at: null,
     last_run_at: null,
@@ -869,7 +815,8 @@ export async function callTaskCreateTool(
     `enabled: ${created.enabled}`,
     `channel_id: ${created.channel_id || '(missing)'}`,
     `schedule: ${formatSchedule(created.schedule)}`,
-    `action: ${created.action.type}`,
+    `prompt: ${truncatePreview(created.prompt)}`,
+    `model: ${created.model ?? '(default)'}`,
     `next_run_at: ${created.next_run_at}`,
     `path: .agents/tasks.json`,
   ].join('\n')
@@ -906,7 +853,8 @@ export async function callTaskListTool(
         `  enabled: ${task.enabled}`,
         `  channel_id: ${task.channel_id || '(missing)'}`,
         `  schedule: ${formatSchedule(task.schedule)}`,
-        `  action: ${task.action.type}`,
+        `  prompt: ${truncatePreview(task.prompt)}`,
+        `  model: ${task.model ?? '(default)'}`,
         `  last_status: ${task.last_status}`,
         `  next_run_at: ${task.next_run_at}`,
       ].join('\n'),
