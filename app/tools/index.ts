@@ -5,6 +5,17 @@ import type {
   FunctionToolRuntime,
   OpenAIFunctionTool,
 } from '../types/tools'
+import {
+  callMemoryDeleteTool,
+  callMemoryListTool,
+  callMemorySetTool,
+  MEMORY_DELETE_TOOL,
+  MEMORY_DELETE_TOOL_SCHEMA,
+  MEMORY_LIST_TOOL,
+  MEMORY_LIST_TOOL_SCHEMA,
+  MEMORY_SET_TOOL,
+  MEMORY_SET_TOOL_SCHEMA,
+} from './memory'
 import { callPatchTool, PATCH_FILE_TOOL, PATCH_TOOL_SCHEMA } from './patch'
 import { callReadTool, READ_FILE_TOOL, READ_TOOL_SCHEMA } from './read'
 import { callRunTool, RUN_TERMINAL_COMMAND, RUN_TOOL_SCHEMA } from './run'
@@ -38,6 +49,9 @@ const OPENAI_TOOL_NAMES = new Set<string>([
   WRITE_FILE_TOOL,
   PATCH_FILE_TOOL,
   SEARCH_TOOL,
+  MEMORY_SET_TOOL,
+  MEMORY_LIST_TOOL,
+  MEMORY_DELETE_TOOL,
   TASK_CREATE_TOOL,
   TASK_LIST_TOOL,
   TASK_PAUSE_TOOL,
@@ -68,6 +82,9 @@ const OPENAI_TOOLS: OpenAIFunctionTool[] = [
   WRITE_TOOL_SCHEMA,
   PATCH_TOOL_SCHEMA,
   SEARCH_TOOL_SCHEMA,
+  MEMORY_SET_TOOL_SCHEMA,
+  MEMORY_LIST_TOOL_SCHEMA,
+  MEMORY_DELETE_TOOL_SCHEMA,
   TASK_CREATE_TOOL_SCHEMA,
   TASK_LIST_TOOL_SCHEMA,
   TASK_PAUSE_TOOL_SCHEMA,
@@ -86,7 +103,7 @@ export class FunctionToolManager {
   }
 
   getStatusSummary(): string {
-    return `Builtin tools: enabled (run/read/write/patch/search/task_create/task_list/task_pause/task_resume, timeout=${this.runtime.defaultTimeoutMs}ms, maxOutput=${this.runtime.maxOutputChars})`
+    return `Builtin tools: enabled (run/read/write/patch/search/memory_set/memory_list/memory_delete/task_create/task_list/task_pause/task_resume, timeout=${this.runtime.defaultTimeoutMs}ms, maxOutput=${this.runtime.maxOutputChars})`
   }
 
   hasOpenAITool(name: string): boolean {
@@ -120,6 +137,18 @@ export class FunctionToolManager {
 
     if (name === SEARCH_TOOL) {
       return await callSearchTool(this.runtime, rawArgs)
+    }
+
+    if (name === MEMORY_SET_TOOL) {
+      return await callMemorySetTool(this.runtime, rawArgs)
+    }
+
+    if (name === MEMORY_LIST_TOOL) {
+      return await callMemoryListTool(this.runtime, rawArgs)
+    }
+
+    if (name === MEMORY_DELETE_TOOL) {
+      return await callMemoryDeleteTool(this.runtime, rawArgs)
     }
 
     if (name === TASK_CREATE_TOOL) {

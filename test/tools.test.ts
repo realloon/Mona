@@ -81,6 +81,56 @@ describe('FunctionToolManager', () => {
     expect(nextContent).toBe('a\nB\n')
   })
 
+  test('creates, lists, and deletes memory entries', async () => {
+    const manager = createManager()
+
+    const created = await manager.callOpenAITool('builtin__memory_set', {
+      key: 'user-name',
+      value: 'Lizhen',
+    })
+    expect(created).toContain('key: user-name')
+    expect(created).toContain('status: created')
+
+    const listed = await manager.callOpenAITool('builtin__memory_list', {
+      query: 'liz',
+    })
+    expect(listed).toContain('count: 1')
+    expect(listed).toContain('- user-name')
+    expect(listed).toContain('value: Lizhen')
+
+    const removed = await manager.callOpenAITool('builtin__memory_delete', {
+      key: 'user-name',
+    })
+    expect(removed).toContain('status: deleted')
+
+    const listedAfterDelete = await manager.callOpenAITool('builtin__memory_list', {})
+    expect(listedAfterDelete).toContain('(No memory)')
+
+    const raw = await Bun.file(path.join(sandboxDir, '.agents/memory.json')).text()
+    const parsed = JSON.parse(raw) as { memories: Array<{ key: string }> }
+    expect(parsed.memories).toEqual([])
+  })
+
+  test('refuses memory overwrite when overwrite=false', async () => {
+    const manager = createManager()
+
+    await manager.callOpenAITool('builtin__memory_set', {
+      key: 'timezone',
+      value: 'Asia/Shanghai',
+    })
+    const conflict = await manager.callOpenAITool('builtin__memory_set', {
+      key: 'timezone',
+      value: 'UTC',
+      overwrite: false,
+    })
+    expect(conflict).toContain('Memory key already exists')
+
+    const listed = await manager.callOpenAITool('builtin__memory_list', {
+      key: 'timezone',
+    })
+    expect(listed).toContain('value: Asia/Shanghai')
+  })
+
   test('creates task from chinese schedule text and persists to json', async () => {
     const manager = createManager()
 
