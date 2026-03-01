@@ -28,7 +28,6 @@ cp .env.example .env
 
 - `OPENAI_BASE_URL` 默认 `https://api.openai.com/v1`
 - `OPENAI_MODEL` 默认 `gpt-4o-mini`
-- `SYSTEM_PROMPT` 默认 `You are a helpful assistant.`
 - `MAX_HISTORY_MESSAGES` 默认 `20`
 - `DISCORD_GUILD_ID` 可选，填服务器 ID 时 Slash 命令注册更快
 - `DISCORD_REQUIRE_MENTION` 默认 `true`
@@ -48,6 +47,7 @@ Discord 侧前置条件：
 - Bot 已邀请到服务器
 - 开启 `MESSAGE CONTENT INTENT`
 - Bot 有目标频道读写权限
+- 系统提示词文件存在：`.agents/system.xml`
 
 ## 4. 使用说明
 

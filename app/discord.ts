@@ -52,6 +52,17 @@ if (!botToken) {
 
 const baseURL = env.OPENAI_BASE_URL
 const client = new OpenAI({ apiKey, baseURL })
+const systemPromptPath = `${process.cwd()}/.agents/system.xml`
+const systemPromptFile = Bun.file(systemPromptPath)
+if (!(await systemPromptFile.exists())) {
+  console.error(`Missing system prompt file: ${systemPromptPath}`)
+  process.exit(1)
+}
+const systemPrompt = (await systemPromptFile.text()).trim()
+if (!systemPrompt) {
+  console.error(`System prompt file is empty: ${systemPromptPath}`)
+  process.exit(1)
+}
 
 const maxHistoryMessages = Number.parseInt(env.MAX_HISTORY_MESSAGES ?? '20', 10)
 const terminalApprovalTimeoutMs = Number.parseInt(
@@ -60,7 +71,6 @@ const terminalApprovalTimeoutMs = Number.parseInt(
 )
 
 const model = env.OPENAI_MODEL ?? 'gpt-4o-mini'
-const systemPrompt = env.SYSTEM_PROMPT ?? 'You are a helpful assistant.'
 const requireMention =
   (env.DISCORD_REQUIRE_MENTION ?? 'true').toLowerCase() !== 'false'
 const commandGuildId = env.DISCORD_GUILD_ID?.trim() || null
@@ -729,6 +739,7 @@ async function run(): Promise<void> {
       console.log('Discord gateway online')
       console.log(`Bot: ${ready.user.tag}`)
       console.log(`Model: ${model}`)
+      console.log(`System prompt: ${systemPromptPath}`)
       if (baseURL) {
         console.log(`Base URL: ${baseURL}`)
       }
