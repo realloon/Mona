@@ -14,7 +14,7 @@ type FunctionToolOptions = {
 
 const RUN_TERMINAL_COMMAND = 'builtin__run'
 const READ_FILE_TOOL = 'builtin__read'
-const EDIT_FILE_TOOL = 'builtin__edit'
+const WRITE_FILE_TOOL = 'builtin__write'
 const PATCH_FILE_TOOL = 'builtin__patch'
 const MIN_TIMEOUT_MS = 100
 const MAX_TIMEOUT_MS = 120000
@@ -109,14 +109,14 @@ export class FunctionToolManager {
   }
 
   getStatusSummary(): string {
-    return `Builtin tools: enabled (run/read/edit/patch, timeout=${this.defaultTimeoutMs}ms, maxOutput=${this.maxOutputChars})`
+    return `Builtin tools: enabled (run/read/write/patch, timeout=${this.defaultTimeoutMs}ms, maxOutput=${this.maxOutputChars})`
   }
 
   hasOpenAITool(name: string): boolean {
     return (
       name === RUN_TERMINAL_COMMAND ||
       name === READ_FILE_TOOL ||
-      name === EDIT_FILE_TOOL ||
+      name === WRITE_FILE_TOOL ||
       name === PATCH_FILE_TOOL
     )
   }
@@ -173,7 +173,7 @@ export class FunctionToolManager {
       {
         type: 'function',
         function: {
-          name: EDIT_FILE_TOOL,
+          name: WRITE_FILE_TOOL,
           description: 'Write or append text to a file.',
           parameters: {
             type: 'object',
@@ -269,8 +269,8 @@ export class FunctionToolManager {
       return await this.callReadTool(rawArgs)
     }
 
-    if (name === EDIT_FILE_TOOL) {
-      return await this.callEditTool(rawArgs)
+    if (name === WRITE_FILE_TOOL) {
+      return await this.callWriteTool(rawArgs)
     }
 
     if (name === PATCH_FILE_TOOL) {
@@ -502,7 +502,7 @@ export class FunctionToolManager {
     }
   }
 
-  private async callEditTool(rawArgs: unknown): Promise<string> {
+  private async callWriteTool(rawArgs: unknown): Promise<string> {
     const args = asObject(rawArgs)
     const rawPath = typeof args.path === 'string' ? args.path.trim() : ''
     if (!rawPath) {
