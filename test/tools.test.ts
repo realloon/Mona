@@ -87,7 +87,7 @@ describe('FunctionToolManager', () => {
     const result = await manager.callOpenAITool('builtin__task_create', {
       name: 'drink-water',
       schedule_text: '五分钟后',
-      prompt: '提醒我喝水',
+      action: { type: 'llm', prompt: '提醒我喝水' },
     }, {
       taskContext: {
         channelId: 'channel-1',
@@ -103,7 +103,6 @@ describe('FunctionToolManager', () => {
 
     const raw = await Bun.file(path.join(sandboxDir, '.agents/tasks.json')).text()
     const parsed = JSON.parse(raw) as {
-      version: number
       tasks: Array<{
         name: string
         channel_id: string
@@ -113,7 +112,6 @@ describe('FunctionToolManager', () => {
       }>
     }
 
-    expect(parsed.version).toBe(1)
     expect(parsed.tasks.length).toBe(1)
     expect(parsed.tasks[0]?.name).toBe('drink-water')
     expect(parsed.tasks[0]?.channel_id).toBe('channel-1')
@@ -155,7 +153,7 @@ describe('FunctionToolManager', () => {
     const created = await manager.callOpenAITool('builtin__task_create', {
       name: 'daily-brief',
       schedule_text: '每天早上6点',
-      prompt: '生成日报',
+      action: { type: 'llm', prompt: '生成日报' },
     })
     const matched = created.match(/^id:\s*(task_[a-z0-9_]+)/m)
     expect(matched).not.toBeNull()
@@ -176,5 +174,18 @@ describe('FunctionToolManager', () => {
     const listed = await manager.callOpenAITool('builtin__task_list', {})
     expect(listed).toContain(`- ${id}`)
     expect(listed).toContain('daily_at(06:00')
+  })
+
+  test('rejects task_create when action is missing', async () => {
+    const manager = createManager()
+
+    const result = await manager.callOpenAITool('builtin__task_create', {
+      name: 'missing-action',
+      schedule_text: '五分钟后',
+      prompt: 'legacy-prompt-should-not-pass',
+    })
+
+    expect(result).toContain('Invalid action')
+    expect(result).toContain('Missing action')
   })
 })

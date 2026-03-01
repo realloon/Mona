@@ -12,7 +12,6 @@ export const TASK_LIST_TOOL = 'builtin__task_list'
 export const TASK_PAUSE_TOOL = 'builtin__task_pause'
 export const TASK_RESUME_TOOL = 'builtin__task_resume'
 
-export const TASK_STORE_VERSION = 1
 const MAX_DELAY_MINUTES = 60 * 24 * 365
 export const LOCAL_TIMEZONE =
   Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
@@ -62,7 +61,6 @@ export type TaskRecord = {
 }
 
 export type TaskStore = {
-  version: number
   tasks: TaskRecord[]
 }
 
@@ -71,7 +69,7 @@ export const TASK_CREATE_TOOL_SCHEMA: OpenAIFunctionTool = {
   function: {
     name: TASK_CREATE_TOOL,
     description:
-      'Create a scheduled task persisted in .agents/tasks.json. Supports "五分钟后" and "每天早上6点".',
+      'Create a scheduled task persisted in .agents/tasks.json. Requires action. Supports "五分钟后" and "每天早上6点".',
     parameters: {
       type: 'object',
       properties: {
@@ -124,11 +122,6 @@ export const TASK_CREATE_TOOL_SCHEMA: OpenAIFunctionTool = {
           },
           additionalProperties: false,
         },
-        prompt: {
-          type: 'string',
-          description:
-            'Backward-compatible default prompt for llm action. Prefer passing action.',
-        },
         action: {
           type: 'object',
           description: 'Task action to execute at runtime.',
@@ -162,7 +155,7 @@ export const TASK_CREATE_TOOL_SCHEMA: OpenAIFunctionTool = {
             `Timezone for daily schedules. Current runtime supports local timezone only (${LOCAL_TIMEZONE}).`,
         },
       },
-      required: ['name'],
+      required: ['name', 'action'],
       additionalProperties: false,
     },
   },
@@ -339,11 +332,10 @@ function formatSchedule(schedule: TaskSchedule): string {
 function parseScheduleFromText(
   scheduleText: string,
   timezone: string,
-): { schedule: TaskSchedule; error?: string } {
+): { schedule?: TaskSchedule; error?: string } {
   const normalized = scheduleText.replace(/\s+/g, '').trim()
   if (!normalized) {
     return {
-      schedule: { kind: 'once_delay', minutes: 1 },
       error: 'Invalid schedule_text: must be non-empty.',
     }
   }
@@ -355,7 +347,6 @@ function parseScheduleFromText(
     const minutes = parseNumberToken(minuteMatch[1])
     if (!minutes || minutes < 1 || minutes > MAX_DELAY_MINUTES) {
       return {
-        schedule: { kind: 'once_delay', minutes: 1 },
         error: `Invalid minutes in schedule_text: ${minuteMatch[1]}`,
       }
     }
@@ -371,14 +362,12 @@ function parseScheduleFromText(
     const hours = parseNumberToken(hourDelayMatch[1])
     if (!hours) {
       return {
-        schedule: { kind: 'once_delay', minutes: 1 },
         error: `Invalid hours in schedule_text: ${hourDelayMatch[1]}`,
       }
     }
     const minutes = hours * 60
     if (minutes < 1 || minutes > MAX_DELAY_MINUTES) {
       return {
-        schedule: { kind: 'once_delay', minutes: 1 },
         error: `Invalid delay in schedule_text: ${hourDelayMatch[1]}小时后`,
       }
     }
@@ -396,7 +385,6 @@ function parseScheduleFromText(
     const validTimezone = ensureLocalTimezone(timezone)
     if (validTimezone === null) {
       return {
-        schedule: { kind: 'once_delay', minutes: 1 },
         error: `Unsupported timezone: ${timezone}. Only local timezone is supported now: ${LOCAL_TIMEZONE}.`,
       }
     }
@@ -409,7 +397,6 @@ function parseScheduleFromText(
       minute > 59
     ) {
       return {
-        schedule: { kind: 'once_delay', minutes: 1 },
         error: `Invalid daily time in schedule_text: ${scheduleText}`,
       }
     }
@@ -430,13 +417,11 @@ function parseScheduleFromText(
     const validTimezone = ensureLocalTimezone(timezone)
     if (validTimezone === null) {
       return {
-        schedule: { kind: 'once_delay', minutes: 1 },
         error: `Unsupported timezone: ${timezone}. Only local timezone is supported now: ${LOCAL_TIMEZONE}.`,
       }
     }
     if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
       return {
-        schedule: { kind: 'once_delay', minutes: 1 },
         error: `Invalid daily time in schedule_text: ${scheduleText}`,
       }
     }
@@ -451,7 +436,6 @@ function parseScheduleFromText(
   }
 
   return {
-    schedule: { kind: 'once_delay', minutes: 1 },
     error:
       'Unsupported schedule_text. Supported examples: "五分钟后", "10分钟后", "2小时后", "每天早上6点", "每天 06:30".',
   }
@@ -460,12 +444,11 @@ function parseScheduleFromText(
 function parseScheduleFromStructured(
   raw: unknown,
   timezoneFallback: string,
-): { schedule: TaskSchedule; error?: string } {
+): { schedule?: TaskSchedule; error?: string } {
   const schedule = asObject(raw)
   const kind = typeof schedule.kind === 'string' ? schedule.kind.trim() : ''
   if (!kind) {
     return {
-      schedule: { kind: 'once_delay', minutes: 1 },
       error:
         'Invalid schedule: "kind" is required when using structured schedule.',
     }
@@ -475,7 +458,6 @@ function parseScheduleFromStructured(
     const minutes = asInteger(schedule.minutes)
     if (!minutes || minutes < 1 || minutes > MAX_DELAY_MINUTES) {
       return {
-        schedule: { kind: 'once_delay', minutes: 1 },
         error: `"schedule.minutes" must be an integer between 1 and ${MAX_DELAY_MINUTES}.`,
       }
     }
@@ -492,7 +474,6 @@ function parseScheduleFromStructured(
     const validTimezone = ensureLocalTimezone(timezoneRaw)
     if (validTimezone === null) {
       return {
-        schedule: { kind: 'once_delay', minutes: 1 },
         error: `Unsupported timezone: ${timezoneRaw}. Only local timezone is supported now: ${LOCAL_TIMEZONE}.`,
       }
     }
@@ -505,7 +486,6 @@ function parseScheduleFromStructured(
       minute > 59
     ) {
       return {
-        schedule: { kind: 'once_delay', minutes: 1 },
         error:
           '"schedule.hour" must be 0-23 and "schedule.minute" must be 0-59 for daily_at.',
       }
@@ -521,7 +501,6 @@ function parseScheduleFromStructured(
   }
 
   return {
-    schedule: { kind: 'once_delay', minutes: 1 },
     error: `Unsupported schedule kind: ${kind}`,
   }
 }
@@ -561,29 +540,20 @@ function parseScheduleFromArgs(
   }
 }
 
-function parseActionFromArgs(
-  rawArgs: unknown,
-  defaultPrompt: string,
-): { action?: TaskAction; error?: string } {
+function parseActionFromArgs(rawArgs: unknown): {
+  action?: TaskAction
+  error?: string
+} {
   const args = asObject(rawArgs)
   if (args.action === undefined) {
-    if (!defaultPrompt.trim()) {
-      return { error: 'Missing action: provide "action" or non-empty "prompt".' }
-    }
-    return {
-      action: {
-        type: 'llm',
-        prompt: defaultPrompt.trim(),
-      },
-    }
+    return { error: 'Missing action: provide "action".' }
   }
 
   const actionObj = asObject(args.action)
   const type = typeof actionObj.type === 'string' ? actionObj.type.trim() : ''
   if (type === 'message') {
-    const contentRaw =
+    const content =
       typeof actionObj.content === 'string' ? actionObj.content.trim() : ''
-    const content = contentRaw || defaultPrompt.trim()
     if (!content) {
       return {
         error:
@@ -599,9 +569,8 @@ function parseActionFromArgs(
   }
 
   if (type === 'llm') {
-    const promptRaw =
+    const prompt =
       typeof actionObj.prompt === 'string' ? actionObj.prompt.trim() : ''
-    const prompt = promptRaw || defaultPrompt.trim()
     if (!prompt) {
       return {
         error: 'Invalid action: "action.prompt" must be non-empty for llm action.',
@@ -661,13 +630,9 @@ function normalizeTaskRecord(raw: unknown): TaskRecord | null {
     return null
   }
 
-  const defaultPromptRaw =
-    typeof obj.prompt === 'string' ? obj.prompt.trim() : name
-  const actionParsed = parseActionFromArgs(
-    { action: obj.action, prompt: defaultPromptRaw },
-    defaultPromptRaw,
-  )
-  if (!actionParsed.action) {
+  const actionParsed = parseActionFromArgs({ action: obj.action })
+  const action = actionParsed.action ?? null
+  if (!action) {
     return null
   }
 
@@ -689,7 +654,7 @@ function normalizeTaskRecord(raw: unknown): TaskRecord | null {
     creator_user_id:
       typeof obj.creator_user_id === 'string' ? obj.creator_user_id.trim() : '',
     schedule: scheduleParsed.schedule,
-    action: actionParsed.action,
+    action,
     next_run_at: nextRunAt,
     last_run_started_at: parseDateOrNull(obj.last_run_started_at),
     last_run_at: parseDateOrNull(obj.last_run_at),
@@ -703,9 +668,9 @@ function normalizeTaskRecord(raw: unknown): TaskRecord | null {
 
 function normalizeTaskStore(raw: unknown): TaskStore {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return { version: TASK_STORE_VERSION, tasks: [] }
+    return { tasks: [] }
   }
-  const value = raw as { version?: unknown; tasks?: unknown }
+  const value = raw as { tasks?: unknown }
   const tasks = Array.isArray(value.tasks) ? value.tasks : []
   const normalizedTasks: TaskRecord[] = []
   for (const task of tasks) {
@@ -715,46 +680,38 @@ function normalizeTaskStore(raw: unknown): TaskStore {
     }
   }
   return {
-    version:
-      typeof value.version === 'number' && Number.isFinite(value.version)
-        ? Math.floor(value.version)
-        : TASK_STORE_VERSION,
     tasks: normalizedTasks,
   }
 }
 
-async function readTaskStore(runtime: FunctionToolRuntime): Promise<TaskStore> {
-  const path = getTaskStorePath(runtime)
+async function readTaskStoreFromPath(path: string): Promise<TaskStore> {
   const ref = file(path)
   if (!(await ref.exists())) {
-    return { version: TASK_STORE_VERSION, tasks: [] }
+    return { tasks: [] }
   }
 
   const raw = (await ref.text()).trim()
   if (!raw) {
-    return { version: TASK_STORE_VERSION, tasks: [] }
+    return { tasks: [] }
   }
 
   const parsed = JSON.parse(raw)
   return normalizeTaskStore(parsed)
 }
 
+async function readTaskStore(runtime: FunctionToolRuntime): Promise<TaskStore> {
+  const path = getTaskStorePath(runtime)
+  return await readTaskStoreFromPath(path)
+}
+
 export async function readTaskStoreFromProjectRoot(
   projectRoot: string,
 ): Promise<TaskStore> {
-  const runtime: FunctionToolRuntime = {
-    projectRoot,
-    defaultTimeoutMs: 1000,
-    maxOutputChars: 1000,
-  }
-  return await readTaskStore(runtime)
+  const path = getTaskStorePathFromProjectRoot(projectRoot)
+  return await readTaskStoreFromPath(path)
 }
 
-async function writeTaskStore(
-  runtime: FunctionToolRuntime,
-  store: TaskStore,
-): Promise<void> {
-  const path = getTaskStorePath(runtime)
+async function writeTaskStoreToPath(path: string, store: TaskStore): Promise<void> {
   const tempPath = `${path}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
   const content = `${JSON.stringify(store, null, 2)}\n`
 
@@ -767,16 +724,20 @@ async function writeTaskStore(
   }
 }
 
+async function writeTaskStore(
+  runtime: FunctionToolRuntime,
+  store: TaskStore,
+): Promise<void> {
+  const path = getTaskStorePath(runtime)
+  await writeTaskStoreToPath(path, store)
+}
+
 export async function writeTaskStoreFromProjectRoot(
   projectRoot: string,
   store: TaskStore,
 ): Promise<void> {
-  const runtime: FunctionToolRuntime = {
-    projectRoot,
-    defaultTimeoutMs: 1000,
-    maxOutputChars: 1000,
-  }
-  await writeTaskStore(runtime, store)
+  const path = getTaskStorePathFromProjectRoot(projectRoot)
+  await writeTaskStoreToPath(path, store)
 }
 
 function generateTaskId(): string {
@@ -836,8 +797,7 @@ export async function callTaskCreateTool(
   const creatorUserId =
     creatorUserIdRaw || hooks?.taskContext?.requesterUserId || ''
 
-  const promptRaw = typeof args.prompt === 'string' ? args.prompt.trim() : name
-  const actionParsed = parseActionFromArgs(args, promptRaw || name)
+  const actionParsed = parseActionFromArgs(args)
   if (!actionParsed.action) {
     return `Invalid action: ${actionParsed.error ?? 'unknown error'}`
   }
@@ -894,7 +854,6 @@ export async function callTaskCreateTool(
     created_at: nowIso,
     updated_at: nowIso,
   }
-  store.version = TASK_STORE_VERSION
   store.tasks.push(created)
 
   try {
@@ -981,7 +940,6 @@ export async function callTaskPauseTool(
 
   task.enabled = false
   task.updated_at = isoNow()
-  store.version = TASK_STORE_VERSION
 
   try {
     await writeTaskStore(runtime, store)
@@ -1030,7 +988,6 @@ export async function callTaskResumeTool(
     task.next_run_at = computeNextRunAt(task.schedule, now).toISOString()
   }
   task.updated_at = isoNow()
-  store.version = TASK_STORE_VERSION
 
   try {
     await writeTaskStore(runtime, store)

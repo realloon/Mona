@@ -179,7 +179,7 @@ export class TaskScheduler {
     try {
       const store = await readTaskStoreFromProjectRoot(this.projectRoot)
       const task = store.tasks.find(item => item.id === taskId)
-      if (!task || !isTaskDue(task, new Date()) || !task.enabled) {
+      if (!task || !isTaskDue(task, new Date())) {
         return
       }
 

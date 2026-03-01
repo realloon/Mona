@@ -27,10 +27,13 @@ type PendingTaskCreateApproval = {
   summary: string
 }
 
+type ParsedDecision = {
+  approvalId: string
+  decision: 'yes' | 'no'
+}
+
 type CreateApprovalHandlersOptions = {
   terminalApprovalTimeoutMs: number
-  runApprovalCustomIdPrefix?: string
-  taskCreateApprovalCustomIdPrefix?: string
 }
 
 export type ApprovalHandlers = {
@@ -44,6 +47,9 @@ export type ApprovalHandlers = {
   ) => Promise<boolean>
   handleApprovalButton: (interaction: ButtonInteraction) => Promise<void>
 }
+
+const RUN_APPROVAL_CUSTOM_ID_PREFIX = 'builtin-run-approval'
+const TASK_CREATE_APPROVAL_CUSTOM_ID_PREFIX = 'builtin-task-create-approval'
 
 function clampPositiveInt(value: number, fallback: number): number {
   if (!Number.isFinite(value) || value <= 0) {
@@ -71,7 +77,7 @@ function buildDecisionCustomId(
 function parseDecisionCustomId(
   prefix: string,
   customId: string,
-): { approvalId: string; decision: 'yes' | 'no' } | null {
+): ParsedDecision | null {
   const parts = customId.split(':')
   if (
     parts.length !== 3 ||
@@ -91,10 +97,6 @@ function parseDecisionCustomId(
 export function createApprovalHandlers(
   options: CreateApprovalHandlersOptions,
 ): ApprovalHandlers {
-  const runApprovalCustomIdPrefix =
-    options.runApprovalCustomIdPrefix ?? 'builtin-run-approval'
-  const taskCreateApprovalCustomIdPrefix =
-    options.taskCreateApprovalCustomIdPrefix ?? 'builtin-task-create-approval'
   const pendingApprovals = new Map<string, PendingApproval>()
   const pendingTaskCreateApprovals = new Map<string, PendingTaskCreateApproval>()
 
@@ -105,7 +107,7 @@ export function createApprovalHandlers(
           .setCustomId(buildDecisionCustomId(prefix, approvalId, 'yes'))
           .setLabel('Yes')
           .setStyle(
-            prefix === runApprovalCustomIdPrefix
+            prefix === RUN_APPROVAL_CUSTOM_ID_PREFIX
               ? ButtonStyle.Danger
               : ButtonStyle.Success,
           ),
@@ -133,7 +135,7 @@ export function createApprovalHandlers(
         `command: \`${commandPreview}\``,
         'Approve this execution?',
       ].join('\n'),
-      components: buildApprovalComponents(runApprovalCustomIdPrefix, approvalId),
+      components: buildApprovalComponents(RUN_APPROVAL_CUSTOM_ID_PREFIX, approvalId),
       allowedMentions: { repliedUser: false },
     })
 
@@ -184,7 +186,10 @@ export function createApprovalHandlers(
         summary,
         'Create this scheduled task?',
       ].join('\n'),
-      components: buildApprovalComponents(taskCreateApprovalCustomIdPrefix, approvalId),
+      components: buildApprovalComponents(
+        TASK_CREATE_APPROVAL_CUSTOM_ID_PREFIX,
+        approvalId,
+      ),
       allowedMentions: { repliedUser: false },
     })
 
@@ -214,15 +219,8 @@ export function createApprovalHandlers(
 
   async function handleRunApprovalButton(
     interaction: ButtonInteraction,
+    parsed: ParsedDecision,
   ): Promise<void> {
-    const parsed = parseDecisionCustomId(
-      runApprovalCustomIdPrefix,
-      interaction.customId,
-    )
-    if (!parsed) {
-      return
-    }
-
     const pending = pendingApprovals.get(parsed.approvalId)
     if (!pending) {
       await interaction.reply({
@@ -264,15 +262,8 @@ export function createApprovalHandlers(
 
   async function handleTaskCreateApprovalButton(
     interaction: ButtonInteraction,
+    parsed: ParsedDecision,
   ): Promise<void> {
-    const parsed = parseDecisionCustomId(
-      taskCreateApprovalCustomIdPrefix,
-      interaction.customId,
-    )
-    if (!parsed) {
-      return
-    }
-
     const pending = pendingTaskCreateApprovals.get(parsed.approvalId)
     if (!pending) {
       await interaction.reply({
@@ -314,20 +305,20 @@ export function createApprovalHandlers(
 
   async function handleApprovalButton(interaction: ButtonInteraction): Promise<void> {
     const runParsed = parseDecisionCustomId(
-      runApprovalCustomIdPrefix,
+      RUN_APPROVAL_CUSTOM_ID_PREFIX,
       interaction.customId,
     )
     if (runParsed) {
-      await handleRunApprovalButton(interaction)
+      await handleRunApprovalButton(interaction, runParsed)
       return
     }
 
     const taskParsed = parseDecisionCustomId(
-      taskCreateApprovalCustomIdPrefix,
+      TASK_CREATE_APPROVAL_CUSTOM_ID_PREFIX,
       interaction.customId,
     )
     if (taskParsed) {
-      await handleTaskCreateApprovalButton(interaction)
+      await handleTaskCreateApprovalButton(interaction, taskParsed)
     }
   }
 
