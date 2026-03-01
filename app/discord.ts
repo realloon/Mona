@@ -1,5 +1,5 @@
 import OpenAI from 'openai'
-import { env } from 'bun'
+import { env, file } from 'bun'
 import {
   ActionRowBuilder,
   ApplicationCommandOptionType,
@@ -15,7 +15,7 @@ import {
 } from 'discord.js'
 import { McpToolManager, parseToolArguments } from './mcp.js'
 import { SkillManager } from './skills.js'
-import { FunctionToolManager } from './function-tools.js'
+import { FunctionToolManager } from './tools/index.js'
 import type { DangerousCommandRequest } from './types/tools.js'
 
 type Role = 'user' | 'assistant'
@@ -53,7 +53,7 @@ if (!botToken) {
 const baseURL = env.OPENAI_BASE_URL
 const client = new OpenAI({ apiKey, baseURL })
 const systemPromptPath = `${process.cwd()}/.agents/system.xml`
-const systemPromptFile = Bun.file(systemPromptPath)
+const systemPromptFile = file(systemPromptPath)
 if (!(await systemPromptFile.exists())) {
   console.error(`Missing system prompt file: ${systemPromptPath}`)
   process.exit(1)
@@ -739,7 +739,6 @@ async function run(): Promise<void> {
       console.log('Discord gateway online')
       console.log(`Bot: ${ready.user.tag}`)
       console.log(`Model: ${model}`)
-      console.log(`System prompt: ${systemPromptPath}`)
       if (baseURL) {
         console.log(`Base URL: ${baseURL}`)
       }

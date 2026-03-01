@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "bun run app/discord.ts",
-    "typecheck": "bunx tsc --pretty false --noEmit --target es2022 --module nodenext --moduleResolution nodenext --skipLibCheck app/discord.ts app/mcp.ts app/skills.ts app/function-tools.ts",
+    "typecheck": "bunx tsc --pretty false --noEmit --target es2022 --module nodenext --moduleResolution nodenext --skipLibCheck app/discord.ts app/mcp.ts app/skills.ts app/tools/index.ts",
     "test": "bun test"
   },
   "dependencies": {

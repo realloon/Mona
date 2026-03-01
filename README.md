@@ -20,7 +20,7 @@ Required env vars:
 - Replies in Discord channels and DMs
 - Supports slash commands: `/clear`, `/skills`, `/mcp list`, `/mcp enable`, `/mcp disable`
 - Supports MCP tools (`.agents/mcp.json`)
-- Includes built-in local tools: `builtin__run`, `builtin__read`, `builtin__edit`, `builtin__patch`
+- Includes built-in local tools: `builtin__run`, `builtin__read`, `builtin__write`, `builtin__patch`, `builtin__search`
 
 ## Discord Setup
 

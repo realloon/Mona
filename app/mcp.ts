@@ -1,4 +1,5 @@
 import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js'
+import { file, write } from 'bun'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
@@ -126,7 +127,7 @@ async function readMcpServersFromConfigFile(): Promise<{
   servers: Record<string, McpServerConfig>
 }> {
   const configPath = `${process.cwd()}/.agents/mcp.json`
-  const configFile = Bun.file(configPath)
+  const configFile = file(configPath)
 
   try {
     if (!(await configFile.exists())) {
@@ -165,7 +166,7 @@ function normalizePersistedState(raw: unknown): PersistedMcpState {
 
 async function readMcpStateFile(): Promise<PersistedMcpState> {
   const statePath = getMcpStateFilePath()
-  const stateFile = Bun.file(statePath)
+  const stateFile = file(statePath)
   if (!(await stateFile.exists())) {
     return { disabledServers: [] }
   }
@@ -183,7 +184,7 @@ async function readMcpStateFile(): Promise<PersistedMcpState> {
 async function writeMcpStateFile(state: PersistedMcpState): Promise<void> {
   const statePath = getMcpStateFilePath()
   const content = `${JSON.stringify(state, null, 2)}\n`
-  await Bun.write(statePath, content, { createPath: true })
+  await write(statePath, content, { createPath: true })
 }
 
 function normalizeToolContent(result: unknown): string {

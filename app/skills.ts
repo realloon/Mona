@@ -1,3 +1,5 @@
+import { file, Glob } from 'bun'
+
 type LoadedSkill = {
   id: string
   name: string
@@ -94,11 +96,11 @@ export class SkillManager {
     const skillsRoot = `${process.cwd()}/.agents/skills`
     this.skills.length = 0
 
-    const glob = new Bun.Glob('**/SKILL.md')
+    const glob = new Glob('**/SKILL.md')
     try {
       for await (const relativePath of glob.scan({ cwd: skillsRoot })) {
         const absolutePath = `${skillsRoot}/${relativePath}`
-        const raw = (await Bun.file(absolutePath).text()).trim()
+        const raw = (await file(absolutePath).text()).trim()
         if (!raw) {
           continue
         }
