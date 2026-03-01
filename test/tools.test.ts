@@ -80,4 +80,101 @@ describe('FunctionToolManager', () => {
     const nextContent = await Bun.file(filePath).text()
     expect(nextContent).toBe('a\nB\n')
   })
+
+  test('creates task from chinese schedule text and persists to json', async () => {
+    const manager = createManager()
+
+    const result = await manager.callOpenAITool('builtin__task_create', {
+      name: 'drink-water',
+      schedule_text: '五分钟后',
+      prompt: '提醒我喝水',
+    }, {
+      taskContext: {
+        channelId: 'channel-1',
+        requesterUserId: 'user-1',
+        timezone: 'Asia/Shanghai',
+      },
+    })
+
+    expect(result).toContain('id: task_')
+    expect(result).toContain('schedule: once_delay(5m)')
+    expect(result).toContain('channel_id: channel-1')
+    expect(result).toContain('action: llm')
+
+    const raw = await Bun.file(path.join(sandboxDir, '.agents/tasks.json')).text()
+    const parsed = JSON.parse(raw) as {
+      version: number
+      tasks: Array<{
+        name: string
+        channel_id: string
+        creator_user_id: string
+        action: { type: string; prompt?: string }
+        schedule: { kind: string; minutes?: number }
+      }>
+    }
+
+    expect(parsed.version).toBe(1)
+    expect(parsed.tasks.length).toBe(1)
+    expect(parsed.tasks[0]?.name).toBe('drink-water')
+    expect(parsed.tasks[0]?.channel_id).toBe('channel-1')
+    expect(parsed.tasks[0]?.creator_user_id).toBe('user-1')
+    expect(parsed.tasks[0]?.action.type).toBe('llm')
+    expect(parsed.tasks[0]?.schedule.kind).toBe('once_delay')
+    expect(parsed.tasks[0]?.schedule.minutes).toBe(5)
+  })
+
+  test('requires task create approval when hook is provided', async () => {
+    const manager = createManager()
+
+    const denied = await manager.callOpenAITool(
+      'builtin__task_create',
+      {
+        name: 'approval-required',
+        schedule_text: '五分钟后',
+        action: { type: 'message', content: 'test message' },
+      },
+      {
+        taskContext: {
+          channelId: 'channel-1',
+          requesterUserId: 'user-1',
+          timezone: 'Asia/Shanghai',
+        },
+        confirmTaskCreate: async () => false,
+      },
+    )
+
+    expect(denied).toContain('Task creation canceled')
+
+    const listed = await manager.callOpenAITool('builtin__task_list', {})
+    expect(listed).toContain('(No tasks)')
+  })
+
+  test('pauses and resumes daily task', async () => {
+    const manager = createManager()
+
+    const created = await manager.callOpenAITool('builtin__task_create', {
+      name: 'daily-brief',
+      schedule_text: '每天早上6点',
+      prompt: '生成日报',
+    })
+    const matched = created.match(/^id:\s*(task_[a-z0-9_]+)/m)
+    expect(matched).not.toBeNull()
+    const id = matched?.[1] ?? ''
+
+    const paused = await manager.callOpenAITool('builtin__task_pause', {
+      id,
+    })
+    expect(paused).toContain(`id: ${id}`)
+    expect(paused).toContain('enabled: false')
+
+    const resumed = await manager.callOpenAITool('builtin__task_resume', {
+      id,
+    })
+    expect(resumed).toContain(`id: ${id}`)
+    expect(resumed).toContain('enabled: true')
+
+    const listed = await manager.callOpenAITool('builtin__task_list', {})
+    expect(listed).toContain(`- ${id}`)
+    expect(listed).toContain('daily_at(06:00')
+  })
 })

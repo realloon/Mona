@@ -9,6 +9,20 @@ import { callPatchTool, PATCH_FILE_TOOL, PATCH_TOOL_SCHEMA } from './patch.js'
 import { callReadTool, READ_FILE_TOOL, READ_TOOL_SCHEMA } from './read.js'
 import { callRunTool, RUN_TERMINAL_COMMAND, RUN_TOOL_SCHEMA } from './run.js'
 import { callSearchTool, SEARCH_TOOL, SEARCH_TOOL_SCHEMA } from './search.js'
+import {
+  callTaskCreateTool,
+  callTaskListTool,
+  callTaskPauseTool,
+  callTaskResumeTool,
+  TASK_CREATE_TOOL,
+  TASK_CREATE_TOOL_SCHEMA,
+  TASK_LIST_TOOL,
+  TASK_LIST_TOOL_SCHEMA,
+  TASK_PAUSE_TOOL,
+  TASK_PAUSE_TOOL_SCHEMA,
+  TASK_RESUME_TOOL,
+  TASK_RESUME_TOOL_SCHEMA,
+} from './tasks.js'
 import { callWriteTool, WRITE_FILE_TOOL, WRITE_TOOL_SCHEMA } from './write.js'
 
 const MIN_TIMEOUT_MS = 100
@@ -24,6 +38,10 @@ const OPENAI_TOOL_NAMES = new Set<string>([
   WRITE_FILE_TOOL,
   PATCH_FILE_TOOL,
   SEARCH_TOOL,
+  TASK_CREATE_TOOL,
+  TASK_LIST_TOOL,
+  TASK_PAUSE_TOOL,
+  TASK_RESUME_TOOL,
 ])
 
 function clamp(value: number, min: number, max: number): number {
@@ -50,6 +68,10 @@ const OPENAI_TOOLS: OpenAIFunctionTool[] = [
   WRITE_TOOL_SCHEMA,
   PATCH_TOOL_SCHEMA,
   SEARCH_TOOL_SCHEMA,
+  TASK_CREATE_TOOL_SCHEMA,
+  TASK_LIST_TOOL_SCHEMA,
+  TASK_PAUSE_TOOL_SCHEMA,
+  TASK_RESUME_TOOL_SCHEMA,
 ]
 
 export class FunctionToolManager {
@@ -64,7 +86,7 @@ export class FunctionToolManager {
   }
 
   getStatusSummary(): string {
-    return `Builtin tools: enabled (run/read/write/patch/search, timeout=${this.runtime.defaultTimeoutMs}ms, maxOutput=${this.runtime.maxOutputChars})`
+    return `Builtin tools: enabled (run/read/write/patch/search/task_create/task_list/task_pause/task_resume, timeout=${this.runtime.defaultTimeoutMs}ms, maxOutput=${this.runtime.maxOutputChars})`
   }
 
   hasOpenAITool(name: string): boolean {
@@ -98,6 +120,22 @@ export class FunctionToolManager {
 
     if (name === SEARCH_TOOL) {
       return await callSearchTool(this.runtime, rawArgs)
+    }
+
+    if (name === TASK_CREATE_TOOL) {
+      return await callTaskCreateTool(this.runtime, rawArgs, hooks)
+    }
+
+    if (name === TASK_LIST_TOOL) {
+      return await callTaskListTool(this.runtime, rawArgs)
+    }
+
+    if (name === TASK_PAUSE_TOOL) {
+      return await callTaskPauseTool(this.runtime, rawArgs)
+    }
+
+    if (name === TASK_RESUME_TOOL) {
+      return await callTaskResumeTool(this.runtime, rawArgs)
     }
 
     return `Unknown local tool: ${name}`
