@@ -1,4 +1,4 @@
-import { defineConfig } from './app/types/config.js'
+import { defineConfig } from './app/types/config'
 
 export default defineConfig({
   openai: {
