@@ -5,14 +5,14 @@ import { McpToolManager } from './mcp.js'
 import { TaskScheduler } from './scheduler.js'
 import { SkillManager } from './skills.js'
 import { FunctionToolManager } from './tools/index.js'
-import { createApprovalHandlers } from './discord/approvals.js'
-import { createChatEngine } from './discord/chat-engine.js'
+import { createApprovalHandlers } from './gateway/approvals.js'
+import { createChatEngine } from './gateway/chat-engine.js'
 import {
   createInteractionHandler,
   createSlashCommandHandler,
   registerSlashCommands,
-} from './discord/interaction-handler.js'
-import { createMessageHandler } from './discord/message-handler.js'
+} from './gateway/interaction-handler.js'
+import { createMessageHandler } from './gateway/message-handler.js'
 
 const apiKey = env.OPENAI_API_KEY
 if (!apiKey) {
