@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "bun run app/bot.ts",
-    "typecheck": "bunx tsc --pretty false --noEmit --target es2022 --module nodenext --moduleResolution nodenext --skipLibCheck app/bot.ts app/mcp.ts app/skills.ts app/tools/index.ts",
+    "typecheck": "bunx tsc --pretty false --noEmit --target es2022 --module esnext --moduleResolution bundler --skipLibCheck app/bot.ts app/mcp.ts app/skills.ts app/tools/index.ts",
     "test": "bun test"
   },
   "dependencies": {

@@ -6,14 +6,9 @@ A minimal Discord agent gateway built with Bun + OpenAI SDK.
 
 ```bash
 bun install
-cp .env.example .env
+cp mona.config.example.ts mona.config.ts
 bun run start
 ```
-
-Required env vars:
-
-- `OPENAI_API_KEY`
-- `DISCORD_BOT_TOKEN`
 
 ## What It Does
 
@@ -31,8 +26,8 @@ Required env vars:
 
 ## Behavior
 
-- If `DISCORD_REQUIRE_MENTION=true`, the bot only responds when mentioned
-- If `DISCORD_REQUIRE_MENTION=false`, it responds to regular channel messages
+- If `discord.requireMention=true`, the bot only responds when mentioned
+- If `discord.requireMention=false`, it responds to regular channel messages
 - In DMs, it responds directly
 - `/clear` resets conversation context for the current channel
 
@@ -40,4 +35,4 @@ Required env vars:
 
 - MCP enabled/disabled state is saved in `.agents/mcp.state.json`
 - High-risk shell commands require explicit Discord approval by the requester
-- If you see `400 status code (no body)`, check `OPENAI_BASE_URL` and model compatibility
+- If you see `400 status code (no body)`, check `openai.baseURL` and model compatibility

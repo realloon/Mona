@@ -2,13 +2,13 @@ import { spawn } from 'bun'
 import type {
   FunctionToolCallHooks,
   OpenAIFunctionTool,
-} from '../types/tools.js'
-import { asObject } from '../utils/guards.js'
+} from '../types/tools'
+import { asObject } from '../utils/guards'
 import {
   resolvePath,
   truncateText,
-} from '../utils/shared.js'
-import type { FunctionToolRuntime } from '../types/tools.js'
+} from '../utils/shared'
+import type { FunctionToolRuntime } from '../types/tools'
 
 export const RUN_TERMINAL_COMMAND = 'builtin__run'
 const MIN_TIMEOUT_MS = 100

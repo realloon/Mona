@@ -4,11 +4,11 @@ import type {
   FunctionToolOptions,
   FunctionToolRuntime,
   OpenAIFunctionTool,
-} from '../types/tools.js'
-import { callPatchTool, PATCH_FILE_TOOL, PATCH_TOOL_SCHEMA } from './patch.js'
-import { callReadTool, READ_FILE_TOOL, READ_TOOL_SCHEMA } from './read.js'
-import { callRunTool, RUN_TERMINAL_COMMAND, RUN_TOOL_SCHEMA } from './run.js'
-import { callSearchTool, SEARCH_TOOL, SEARCH_TOOL_SCHEMA } from './search.js'
+} from '../types/tools'
+import { callPatchTool, PATCH_FILE_TOOL, PATCH_TOOL_SCHEMA } from './patch'
+import { callReadTool, READ_FILE_TOOL, READ_TOOL_SCHEMA } from './read'
+import { callRunTool, RUN_TERMINAL_COMMAND, RUN_TOOL_SCHEMA } from './run'
+import { callSearchTool, SEARCH_TOOL, SEARCH_TOOL_SCHEMA } from './search'
 import {
   callTaskCreateTool,
   callTaskListTool,
@@ -22,8 +22,8 @@ import {
   TASK_PAUSE_TOOL_SCHEMA,
   TASK_RESUME_TOOL,
   TASK_RESUME_TOOL_SCHEMA,
-} from './tasks.js'
-import { callWriteTool, WRITE_FILE_TOOL, WRITE_TOOL_SCHEMA } from './write.js'
+} from './tasks'
+import { callWriteTool, WRITE_FILE_TOOL, WRITE_TOOL_SCHEMA } from './write'
 
 const MIN_TIMEOUT_MS = 100
 const MAX_TIMEOUT_MS = 120000

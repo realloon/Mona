@@ -1,8 +1,8 @@
 import { spawn } from 'bun'
-import type { OpenAIFunctionTool } from '../types/tools.js'
-import type { FunctionToolRuntime } from '../types/tools.js'
-import { asObject, asStringArray } from '../utils/guards.js'
-import { resolvePath, truncateText } from '../utils/shared.js'
+import type { OpenAIFunctionTool } from '../types/tools'
+import type { FunctionToolRuntime } from '../types/tools'
+import { asObject, asStringArray } from '../utils/guards'
+import { resolvePath, truncateText } from '../utils/shared'
 
 export const SEARCH_TOOL = 'builtin__search'
 const DEFAULT_SEARCH_RESULTS = 50

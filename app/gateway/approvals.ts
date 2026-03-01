@@ -9,7 +9,7 @@ import {
 import type {
   DangerousCommandRequest,
   TaskCreateApprovalRequest,
-} from '../types/tools.js'
+} from '../types/tools'
 
 type PendingApproval = {
   requesterUserId: string

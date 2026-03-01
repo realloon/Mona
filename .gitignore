@@ -1,8 +1,7 @@
 node_modules/
-.agents/
+
 .codex/
-
-.env*
-!.env.example
-
 AGENTS.md
+
+.agents/
+mona.config.ts

@@ -2,9 +2,9 @@ import type { Client as DiscordClient, Message } from 'discord.js'
 import type {
   DangerousCommandRequest,
   TaskCreateApprovalRequest,
-} from '../types/tools.js'
-import { formatRequestError } from '../utils/errors.js'
-import type { ChatEngine } from './chat-engine.js'
+} from '../types/tools'
+import { formatRequestError } from '../utils/errors'
+import type { ChatEngine } from './chat-engine'
 
 type SendableChannel = {
   sendTyping: () => Promise<unknown>

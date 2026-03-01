@@ -6,8 +6,8 @@ import {
   type Client as DiscordClient,
   type Interaction,
 } from 'discord.js'
-import { McpToolManager } from '../mcp.js'
-import { SkillManager } from '../skills.js'
+import { McpToolManager } from '../mcp'
+import { SkillManager } from '../skills'
 
 const slashCommands = [
   {

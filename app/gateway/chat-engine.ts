@@ -1,19 +1,19 @@
 import OpenAI from 'openai'
-import { McpToolManager, parseToolArguments } from '../mcp.js'
-import { SkillManager } from '../skills.js'
-import { FunctionToolManager } from '../tools/index.js'
+import { McpToolManager, parseToolArguments } from '../mcp'
+import { SkillManager } from '../skills'
+import { FunctionToolManager } from '../tools'
 import {
   TASK_CREATE_TOOL,
   TASK_LIST_TOOL,
   TASK_PAUSE_TOOL,
   TASK_RESUME_TOOL,
-} from '../tools/tasks.js'
-import { formatRequestError } from '../utils/errors.js'
+} from '../tools/tasks'
+import { formatRequestError } from '../utils/errors'
 import type {
   DangerousCommandRequest,
   TaskCreateApprovalRequest,
   TaskToolContext,
-} from '../types/tools.js'
+} from '../types/tools'
 
 type Role = 'user' | 'assistant'
 

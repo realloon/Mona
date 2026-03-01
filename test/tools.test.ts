@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { rm, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { FunctionToolManager } from '../app/tools/index.ts'
+import { FunctionToolManager } from '../app/tools'
 
 describe('FunctionToolManager', () => {
   let sandboxDir = ''

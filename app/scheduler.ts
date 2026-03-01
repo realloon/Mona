@@ -6,7 +6,7 @@ import {
   readTaskStoreFromProjectRoot,
   type TaskRecord,
   writeTaskStoreFromProjectRoot,
-} from './tools/tasks.js'
+} from './tools/tasks'
 
 type SendableChannel = {
   isTextBased: () => boolean

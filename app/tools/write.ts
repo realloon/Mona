@@ -1,8 +1,8 @@
 import { file, write } from 'bun'
-import type { OpenAIFunctionTool } from '../types/tools.js'
-import { asObject } from '../utils/guards.js'
-import { resolvePath } from '../utils/shared.js'
-import type { FunctionToolRuntime } from '../types/tools.js'
+import type { OpenAIFunctionTool } from '../types/tools'
+import { asObject } from '../utils/guards'
+import { resolvePath } from '../utils/shared'
+import type { FunctionToolRuntime } from '../types/tools'
 
 export const WRITE_FILE_TOOL = 'builtin__write'
 

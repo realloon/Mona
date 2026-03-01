@@ -1,11 +1,11 @@
 import { file, write } from 'bun'
 import { rename, rm } from 'node:fs/promises'
-import type { OpenAIFunctionTool } from '../types/tools.js'
-import { asObject } from '../utils/guards.js'
+import type { OpenAIFunctionTool } from '../types/tools'
+import { asObject } from '../utils/guards'
 import type {
   FunctionToolCallHooks,
   FunctionToolRuntime,
-} from '../types/tools.js'
+} from '../types/tools'
 
 export const TASK_CREATE_TOOL = 'builtin__task_create'
 export const TASK_LIST_TOOL = 'builtin__task_list'

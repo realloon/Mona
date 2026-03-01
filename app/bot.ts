@@ -1,33 +1,24 @@
 import OpenAI from 'openai'
-import { env, file } from 'bun'
+import { file } from 'bun'
 import { Client as DiscordClient, GatewayIntentBits, Partials } from 'discord.js'
-import { McpToolManager } from './mcp.js'
-import { TaskScheduler } from './scheduler.js'
-import { SkillManager } from './skills.js'
-import { FunctionToolManager } from './tools/index.js'
-import { createApprovalHandlers } from './gateway/approvals.js'
-import { createChatEngine } from './gateway/chat-engine.js'
+import config from '../mona.config'
+import { McpToolManager } from './mcp'
+import { TaskScheduler } from './scheduler'
+import { SkillManager } from './skills'
+import { FunctionToolManager } from './tools'
+import { createApprovalHandlers } from './gateway/approvals'
+import { createChatEngine } from './gateway/chat-engine'
 import {
   createInteractionHandler,
   createSlashCommandHandler,
   registerSlashCommands,
-} from './gateway/interaction-handler.js'
-import { createMessageHandler } from './gateway/message-handler.js'
+} from './gateway/interaction-handler'
+import { createMessageHandler } from './gateway/message-handler'
 
-const apiKey = env.OPENAI_API_KEY
-if (!apiKey) {
-  console.error('Missing OPENAI_API_KEY. Please set it in your environment.')
-  process.exit(1)
-}
-
-const botToken = env.DISCORD_BOT_TOKEN
-if (!botToken) {
-  console.error('Missing DISCORD_BOT_TOKEN. Please set it in your environment.')
-  process.exit(1)
-}
-
-const baseURL = env.OPENAI_BASE_URL
-const client = new OpenAI({ apiKey, baseURL })
+const client = new OpenAI({
+  apiKey: config.openai.apiKey,
+  baseURL: config.openai.baseURL,
+})
 const systemPromptPath = `${process.cwd()}/.agents/system.xml`
 const systemPromptFile = file(systemPromptPath)
 if (!(await systemPromptFile.exists())) {
@@ -40,41 +31,22 @@ if (!systemPrompt) {
   process.exit(1)
 }
 
-const maxHistoryMessages = Number.parseInt(env.MAX_HISTORY_MESSAGES ?? '20', 10)
-const terminalApprovalTimeoutMs = Number.parseInt(
-  env.TERMINAL_APPROVAL_TIMEOUT_MS ?? '30000',
-  10,
-)
-
-const model = env.OPENAI_MODEL ?? 'gpt-4o-mini'
-const skillRouterModel = env.SKILL_ROUTER_MODEL ?? model
-const schedulerIntervalMs = Number.parseInt(
-  env.TASK_SCHEDULER_INTERVAL_MS ?? '10000',
-  10,
-)
-const defaultTaskTimezone =
-  env.TASK_DEFAULT_TIMEZONE?.trim() ||
-  Intl.DateTimeFormat().resolvedOptions().timeZone ||
-  'UTC'
-const requireMention =
-  (env.DISCORD_REQUIRE_MENTION ?? 'true').toLowerCase() !== 'false'
-const commandGuildId = env.DISCORD_GUILD_ID?.trim() || null
-const allowedChannelIds = new Set(
-  (env.DISCORD_ALLOWED_CHANNEL_IDS ?? '')
-    .split(',')
-    .map(v => v.trim())
-    .filter(Boolean),
-)
+const model = config.openai.model
+const skillRouterModel = config.openai.skillRouterModel || model
+const maxHistoryMessages = config.chat.maxHistoryMessages
+const terminalApprovalTimeoutMs = config.approvals.terminalApprovalTimeoutMs
+const schedulerIntervalMs = config.scheduler.intervalMs
+const defaultTaskTimezone = config.scheduler.defaultTimezone
+const requireMention = config.discord.requireMention
+const commandGuildId = config.discord.guildId
+const allowedChannelIds = new Set(config.discord.allowedChannelIds)
 
 const mcpTools = new McpToolManager()
 const skillManager = new SkillManager()
 const functionTools = new FunctionToolManager({
   projectRoot: process.cwd(),
-  defaultTimeoutMs: Number.parseInt(env.TERMINAL_TOOL_TIMEOUT_MS ?? '15000', 10),
-  maxOutputChars: Number.parseInt(
-    env.TERMINAL_TOOL_MAX_OUTPUT_CHARS ?? '12000',
-    10,
-  ),
+  defaultTimeoutMs: config.tools.defaultTimeoutMs,
+  maxOutputChars: config.tools.maxOutputChars,
 })
 
 async function run(): Promise<void> {
@@ -155,8 +127,8 @@ async function run(): Promise<void> {
       console.log('Discord gateway online')
       console.log(`Bot: ${ready.user.tag}`)
       console.log(`Model: ${model}`)
-      if (baseURL) {
-        console.log(`Base URL: ${baseURL}`)
+      if (config.openai.baseURL) {
+        console.log(`Base URL: ${config.openai.baseURL}`)
       }
       console.log(`Require mention in guild: ${requireMention}`)
       if (commandGuildId) {
@@ -199,7 +171,7 @@ async function run(): Promise<void> {
   })
 
   try {
-    await discordClient.login(botToken)
+    await discordClient.login(config.discord.botToken)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`Discord login failed: ${message}`)
