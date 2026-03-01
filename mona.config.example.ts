@@ -13,9 +13,6 @@ export default defineConfig({
     guildId: null,
     allowedChannelIds: [],
   },
-  chat: {
-    maxHistoryMessages: 20,
-  },
   approvals: {
     terminalApprovalTimeoutMs: 30000,
   },

@@ -11,9 +11,6 @@ export type MonaConfig = {
     guildId: string | null
     allowedChannelIds: string[]
   }
-  chat: {
-    maxHistoryMessages: number
-  }
   approvals: {
     terminalApprovalTimeoutMs: number
   }

@@ -33,7 +33,6 @@ type CreateChatEngineOptions = {
   systemPrompt: string
   model: string
   skillRouterModel: string
-  maxHistoryMessages: number
   maxSelectedSkills?: number
   mcpTools: McpToolManager
   skillManager: SkillManager
@@ -121,16 +120,6 @@ function extractRouterSelectedSkillIds(raw: Record<string, unknown>): string[] {
 export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
   const sessions = new Map<string, SessionState>()
   const maxSelectedSkills = options.maxSelectedSkills ?? 1
-
-  function trimHistory(history: Turn[]): Turn[] {
-    if (!Number.isFinite(options.maxHistoryMessages) || options.maxHistoryMessages <= 0) {
-      return history
-    }
-    if (history.length <= options.maxHistoryMessages) {
-      return history
-    }
-    return history.slice(history.length - options.maxHistoryMessages)
-  }
 
   function getSession(sessionId: string): SessionState {
     const cached = sessions.get(sessionId)
@@ -348,7 +337,6 @@ export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
   ): Promise<{ answer: string }> {
     const session = getSession(sessionId)
     session.turns.push({ role: 'user', content: userInput })
-    session.turns = trimHistory(session.turns)
 
     try {
       const answer = await askWithChat(
@@ -359,7 +347,6 @@ export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
         taskContext,
       )
       session.turns.push({ role: 'assistant', content: answer })
-      session.turns = trimHistory(session.turns)
       return { answer }
     } catch (error) {
       session.turns.pop()

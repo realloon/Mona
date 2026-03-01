@@ -33,7 +33,6 @@ if (!systemPrompt) {
 
 const model = config.openai.model
 const skillRouterModel = config.openai.skillRouterModel || model
-const maxHistoryMessages = config.chat.maxHistoryMessages
 const terminalApprovalTimeoutMs = config.approvals.terminalApprovalTimeoutMs
 const schedulerIntervalMs = config.scheduler.intervalMs
 const defaultTaskTimezone = config.scheduler.defaultTimezone
@@ -85,7 +84,6 @@ async function run(): Promise<void> {
     systemPrompt,
     model,
     skillRouterModel,
-    maxHistoryMessages,
     mcpTools,
     skillManager,
     functionTools,
