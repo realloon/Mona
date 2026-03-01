@@ -1,5 +1,5 @@
 import path from 'node:path'
-import type { FunctionToolRuntime } from '../types/function-tools.js'
+import type { FunctionToolRuntime } from '../types/tools.js'
 
 export function resolvePath(runtime: FunctionToolRuntime, input: string): string {
   if (!input) {

@@ -2,7 +2,7 @@ import { file } from 'bun'
 import type { OpenAIFunctionTool } from '../types/tools.js'
 import { asObject } from '../utils/guards.js'
 import { resolvePath, truncateText } from '../utils/shared.js'
-import type { FunctionToolRuntime } from '../types/function-tools.js'
+import type { FunctionToolRuntime } from '../types/tools.js'
 
 export const READ_FILE_TOOL = 'builtin__read'
 

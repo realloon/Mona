@@ -1,12 +1,10 @@
 import path from 'node:path'
 import type {
   FunctionToolCallHooks,
-  OpenAIFunctionTool,
-} from '../types/tools.js'
-import type {
   FunctionToolOptions,
   FunctionToolRuntime,
-} from '../types/function-tools.js'
+  OpenAIFunctionTool,
+} from '../types/tools.js'
 import { callPatchTool, PATCH_FILE_TOOL, PATCH_TOOL_SCHEMA } from './patch.js'
 import { callReadTool, READ_FILE_TOOL, READ_TOOL_SCHEMA } from './read.js'
 import { callRunTool, RUN_TERMINAL_COMMAND, RUN_TOOL_SCHEMA } from './run.js'

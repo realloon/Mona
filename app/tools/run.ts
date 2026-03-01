@@ -8,7 +8,7 @@ import {
   resolvePath,
   truncateText,
 } from '../utils/shared.js'
-import type { FunctionToolRuntime } from '../types/function-tools.js'
+import type { FunctionToolRuntime } from '../types/tools.js'
 
 export const RUN_TERMINAL_COMMAND = 'builtin__run'
 const MIN_TIMEOUT_MS = 100

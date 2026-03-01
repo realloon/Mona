@@ -2,7 +2,7 @@ import { file, write } from 'bun'
 import type { OpenAIFunctionTool } from '../types/tools.js'
 import { asObject, asStringArray } from '../utils/guards.js'
 import { resolvePath } from '../utils/shared.js'
-import type { FunctionToolRuntime } from '../types/function-tools.js'
+import type { FunctionToolRuntime } from '../types/tools.js'
 
 export const PATCH_FILE_TOOL = 'builtin__patch'
 const MAX_PATCH_HUNKS = 200

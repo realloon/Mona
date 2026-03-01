@@ -1,6 +1,6 @@
 import { spawn } from 'bun'
 import type { OpenAIFunctionTool } from '../types/tools.js'
-import type { FunctionToolRuntime } from '../types/function-tools.js'
+import type { FunctionToolRuntime } from '../types/tools.js'
 import { asObject, asStringArray } from '../utils/guards.js'
 import { resolvePath, truncateText } from '../utils/shared.js'
 
