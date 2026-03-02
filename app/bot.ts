@@ -20,7 +20,7 @@ const client = new OpenAI({
   apiKey: config.openai.apiKey,
   baseURL: config.openai.baseURL,
 })
-const systemPromptPath = `${process.cwd()}/.agents/system.xml`
+const systemPromptPath = `${process.cwd()}/.agents/system.txt`
 const systemPromptFile = file(systemPromptPath)
 if (!(await systemPromptFile.exists())) {
   console.error(`Missing system prompt file: ${systemPromptPath}`)

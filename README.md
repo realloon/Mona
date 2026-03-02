@@ -22,7 +22,7 @@ bun run start
 - Invite the bot to your server
 - Enable **MESSAGE CONTENT INTENT**
 - Grant channel read/write permissions
-- Ensure `.agents/system.xml` exists
+- Ensure `.agents/system.txt` exists
 
 ## Behavior
 

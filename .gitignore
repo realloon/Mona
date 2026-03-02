@@ -7,7 +7,7 @@ tmp
 mona.config.ts
 
 .agents/*
-!.agents/system.xml
+!.agents/system.txt
 !.agents/skills/
 !.agents/skills/memory/**
 !.agents/skills/scheduler/**

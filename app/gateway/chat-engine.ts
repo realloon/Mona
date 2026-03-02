@@ -126,6 +126,30 @@ function buildMemoryPromptBlock(lines: string[]): string {
   return ['<memory_context>', ...lines, '</memory_context>'].join('\n')
 }
 
+function buildBasePromptBlock(content: string): string {
+  return ['<base_prompt>', content, '</base_prompt>'].join('\n')
+}
+
+function buildSkillsPromptBlock(content: string): string {
+  return ['<skills_context>', content, '</skills_context>'].join('\n')
+}
+
+function buildSystemPrompt(
+  basePrompt: string,
+  memoryInstruction: string,
+  skillInstruction: string,
+): string {
+  return [
+    '<system_prompt>',
+    buildBasePromptBlock(basePrompt),
+    memoryInstruction,
+    skillInstruction,
+    '</system_prompt>',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
 const PROMPT_LOG_RELATIVE_PATH = '.agents/debug/prompts.jsonl'
 
 async function appendPromptLog(
@@ -293,16 +317,16 @@ export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
       availableSkillsXml,
       requestId,
     )
-    const skillInstruction = await options.skillManager.buildSkillInstructionForNames(
-      selectedSkillNames,
-    )
-    const combinedSystemPrompt = [
+    const rawSkillInstruction =
+      await options.skillManager.buildSkillInstructionForNames(selectedSkillNames)
+    const skillInstruction = rawSkillInstruction
+      ? buildSkillsPromptBlock(rawSkillInstruction)
+      : ''
+    const combinedSystemPrompt = buildSystemPrompt(
       options.systemPrompt,
       memoryInstruction,
       skillInstruction,
-    ]
-      .filter(Boolean)
-      .join('\n\n')
+    )
 
     const messages: Array<Record<string, unknown>> = [
       { role: 'system', content: combinedSystemPrompt },
