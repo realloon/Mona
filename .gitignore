@@ -3,7 +3,11 @@ node_modules/
 .codex/
 AGENTS.md
 
-.agents/*
-!.agents/system.xml
 tmp
 mona.config.ts
+
+.agents/*
+!.agents/system.xml
+!.agents/skills/
+!.agents/skills/memory/**
+!.agents/skills/scheduler/**
