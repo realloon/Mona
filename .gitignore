@@ -3,6 +3,7 @@ node_modules/
 .codex/
 AGENTS.md
 
-.agents/
+.agents/*
+!.agents/system.xml
 tmp
 mona.config.ts
