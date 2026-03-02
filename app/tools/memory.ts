@@ -104,6 +104,10 @@ function getMemoryStorePath(runtime: FunctionToolRuntime): string {
   return `${runtime.projectRoot}/.agents/memory.json`
 }
 
+export function getMemoryStorePathFromProjectRoot(projectRoot: string): string {
+  return `${projectRoot}/.agents/memory.json`
+}
+
 function isoNow(): string {
   return new Date().toISOString()
 }
@@ -158,8 +162,7 @@ function normalizeMemoryStore(raw: unknown): MemoryStore {
   }
 }
 
-async function readMemoryStore(runtime: FunctionToolRuntime): Promise<MemoryStore> {
-  const path = getMemoryStorePath(runtime)
+async function readMemoryStoreFromPath(path: string): Promise<MemoryStore> {
   const ref = file(path)
   if (!(await ref.exists())) {
     return { memories: [] }
@@ -172,6 +175,18 @@ async function readMemoryStore(runtime: FunctionToolRuntime): Promise<MemoryStor
 
   const parsed = JSON.parse(raw)
   return normalizeMemoryStore(parsed)
+}
+
+async function readMemoryStore(runtime: FunctionToolRuntime): Promise<MemoryStore> {
+  const path = getMemoryStorePath(runtime)
+  return await readMemoryStoreFromPath(path)
+}
+
+export async function readMemoryStoreFromProjectRoot(
+  projectRoot: string,
+): Promise<MemoryStore> {
+  const path = getMemoryStorePathFromProjectRoot(projectRoot)
+  return await readMemoryStoreFromPath(path)
 }
 
 async function writeMemoryStore(
@@ -347,4 +362,3 @@ export async function callMemoryDeleteTool(
 
   return [`key: ${key}`, 'status: deleted', 'path: .agents/memory.json'].join('\n')
 }
-

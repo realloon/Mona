@@ -1,7 +1,6 @@
 import { file, Glob } from 'bun'
 
 type LoadedSkill = {
-  id: string
   name: string
   description: string
   path: string
@@ -14,7 +13,6 @@ type SkillLoadResult = {
 }
 
 type SkillSummary = {
-  id: string
   name: string
   description: string
 }
@@ -23,11 +21,8 @@ type SkillPromptMetadata = SkillSummary & {
   location: string
 }
 
-function normalizeToken(input: string): string {
-  return input
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9_-]/g, '')
+function normalizeNameKey(input: string): string {
+  return input.toLowerCase().trim()
 }
 
 function escapeRegExp(input: string): string {
@@ -115,6 +110,7 @@ export class SkillManager {
     const skillsRoot = `${process.cwd()}/.agents/skills`
     this.skills.length = 0
     this.bodyCache.clear()
+    const seenNames = new Map<string, string>()
 
     const glob = new Glob('**/SKILL.md')
     try {
@@ -126,9 +122,21 @@ export class SkillManager {
         }
 
         const { metadata } = parseFrontmatter(raw)
-        const folderName = relativePath.split('/')[0] ?? relativePath
-        const id = normalizeToken(metadata.name || folderName) || folderName
-        const name = metadata.name?.trim() || folderName
+        const name = metadata.name?.trim()
+        if (!name) {
+          throw new Error(`Skill name is required in frontmatter: ${absolutePath}`)
+        }
+        const nameKey = normalizeNameKey(name)
+        if (!nameKey) {
+          throw new Error(`Skill name is required in frontmatter: ${absolutePath}`)
+        }
+        const duplicatePath = seenNames.get(nameKey)
+        if (duplicatePath) {
+          throw new Error(
+            `Duplicate skill name "${name}" in frontmatter: ${duplicatePath} and ${absolutePath}`,
+          )
+        }
+        seenNames.set(nameKey, absolutePath)
         const description = metadata.description?.trim()
         if (!description) {
           throw new Error(
@@ -136,14 +144,9 @@ export class SkillManager {
           )
         }
 
-        const aliases = dedupe([
-          normalizeToken(id),
-          normalizeToken(name),
-          normalizeToken(folderName),
-        ]).filter(Boolean)
+        const aliases = dedupe([name]).filter(Boolean)
 
         this.skills.push({
-          id,
           name,
           description,
           path: absolutePath,
@@ -166,7 +169,6 @@ export class SkillManager {
 
   getSummaries(): SkillSummary[] {
     return this.skills.map(skill => ({
-      id: skill.id,
       name: skill.name,
       description: skill.description,
     }))
@@ -174,7 +176,6 @@ export class SkillManager {
 
   getPromptMetadata(): SkillPromptMetadata[] {
     return this.skills.map(skill => ({
-      id: skill.id,
       name: skill.name,
       description: skill.description,
       location: skill.path,
@@ -189,10 +190,8 @@ export class SkillManager {
     const blocks = this.skills.map(skill =>
       [
         '  <skill>',
-        `    <id>${escapeXml(skill.id)}</id>`,
         `    <name>${escapeXml(skill.name)}</name>`,
         `    <description>${escapeXml(skill.description)}</description>`,
-        `    <location>${escapeXml(skill.path)}</location>`,
         '  </skill>',
       ].join('\n'),
     )
@@ -204,28 +203,30 @@ export class SkillManager {
     ].join('\n')
   }
 
-  selectExplicitSkillIds(userInput: string, limit = 1): string[] {
+  selectExplicitSkillNames(userInput: string, limit = 1): string[] {
     if (this.skills.length === 0) {
       return []
     }
 
     const selected = this.skills
       .filter(skill => shouldSelectSkillByText(userInput, skill.aliases))
-      .map(skill => skill.id)
-    return this.filterKnownSkillIds(selected, limit)
+      .map(skill => skill.name)
+    return this.filterKnownSkillNames(selected, limit)
   }
 
-  filterKnownSkillIds(skillIds: string[], limit = 1): string[] {
-    if (!Array.isArray(skillIds) || skillIds.length === 0) {
+  filterKnownSkillNames(skillNames: string[], limit = 1): string[] {
+    if (!Array.isArray(skillNames) || skillNames.length === 0) {
       return []
     }
 
-    const known = new Set(this.skills.map(skill => normalizeToken(skill.id)))
-    const deduped = dedupe(skillIds)
+    const knownByKey = new Map(
+      this.skills.map(skill => [normalizeNameKey(skill.name), skill.name] as const),
+    )
+    const deduped = dedupe(skillNames)
     const normalized = dedupe(
       deduped
-        .map(id => normalizeToken(id))
-        .filter(id => !!id && known.has(id)),
+        .map(name => knownByKey.get(normalizeNameKey(name)) ?? '')
+        .filter(Boolean),
     )
 
     if (!Number.isFinite(limit) || limit <= 0) {
@@ -235,7 +236,7 @@ export class SkillManager {
   }
 
   private async loadSkillBody(skill: LoadedSkill): Promise<string> {
-    const cached = this.bodyCache.get(skill.id)
+    const cached = this.bodyCache.get(skill.name)
     if (cached !== undefined) {
       return cached
     }
@@ -243,18 +244,21 @@ export class SkillManager {
     const raw = await file(skill.path).text()
     const { body } = parseFrontmatter(raw)
     const trimmed = body.trim()
-    this.bodyCache.set(skill.id, trimmed)
+    this.bodyCache.set(skill.name, trimmed)
     return trimmed
   }
 
-  async buildSkillInstructionForIds(skillIds: string[]): Promise<string> {
-    const selectedIds = this.filterKnownSkillIds(skillIds, skillIds.length)
-    if (selectedIds.length === 0) {
+  async buildSkillInstructionForNames(skillNames: string[]): Promise<string> {
+    const selectedNames = this.filterKnownSkillNames(skillNames, skillNames.length)
+    if (selectedNames.length === 0) {
       return ''
     }
 
-    const selected = selectedIds
-      .map(id => this.skills.find(skill => skill.id === id))
+    const byKey = new Map(
+      this.skills.map(skill => [normalizeNameKey(skill.name), skill] as const),
+    )
+    const selected = selectedNames
+      .map(name => byKey.get(normalizeNameKey(name)))
       .filter((skill): skill is LoadedSkill => !!skill)
 
     if (selected.length === 0) {
@@ -279,7 +283,7 @@ export class SkillManager {
   }
 
   async buildSkillInstruction(userInput: string): Promise<string> {
-    const selectedIds = this.selectExplicitSkillIds(userInput)
-    return await this.buildSkillInstructionForIds(selectedIds)
+    const selectedNames = this.selectExplicitSkillNames(userInput)
+    return await this.buildSkillInstructionForNames(selectedNames)
   }
 }

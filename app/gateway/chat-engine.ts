@@ -1,7 +1,10 @@
+import path from 'node:path'
+import { appendFile, mkdir } from 'node:fs/promises'
 import OpenAI from 'openai'
 import { McpToolManager, parseToolArguments } from '../mcp'
 import { SkillManager } from '../skills'
 import { FunctionToolManager } from '../tools'
+import { readMemoryStoreFromProjectRoot } from '../tools/memory'
 import {
   TASK_CREATE_TOOL,
   TASK_LIST_TOOL,
@@ -29,6 +32,8 @@ type SessionState = {
 type TaskIntent = 'create' | 'list' | 'pause' | 'resume' | null
 
 type CreateChatEngineOptions = {
+  projectRoot: string
+  promptLogEnabled: boolean
   client: OpenAI
   systemPrompt: string
   model: string
@@ -109,17 +114,47 @@ function detectTaskIntent(userInput: string): TaskIntent {
   return null
 }
 
-function extractRouterSelectedSkillIds(raw: Record<string, unknown>): string[] {
-  const idsRaw = raw.selected_skill_ids
-  if (!Array.isArray(idsRaw)) {
+function extractRouterSelectedSkillNames(raw: Record<string, unknown>): string[] {
+  const namesRaw = raw.selected_skill_names
+  if (!Array.isArray(namesRaw)) {
     return []
   }
-  return idsRaw.filter((value): value is string => typeof value === 'string')
+  return namesRaw.filter((value): value is string => typeof value === 'string')
+}
+
+function buildMemoryPromptBlock(lines: string[]): string {
+  return ['<memory_context>', ...lines, '</memory_context>'].join('\n')
+}
+
+const PROMPT_LOG_RELATIVE_PATH = '.agents/debug/prompts.jsonl'
+
+async function appendPromptLog(
+  projectRoot: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const logPath = path.join(projectRoot, PROMPT_LOG_RELATIVE_PATH)
+  await mkdir(path.dirname(logPath), { recursive: true })
+  await appendFile(logPath, `${JSON.stringify(payload)}\n`, 'utf8')
 }
 
 export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
   const sessions = new Map<string, SessionState>()
   const maxSelectedSkills = options.maxSelectedSkills ?? 1
+
+  async function logPrompt(payload: Record<string, unknown>): Promise<void> {
+    if (!options.promptLogEnabled) {
+      return
+    }
+    try {
+      await appendPromptLog(options.projectRoot, {
+        timestamp: new Date().toISOString(),
+        ...payload,
+      })
+    } catch (error) {
+      const formatted = formatRequestError(error)
+      console.error(`Prompt logging failed: ${formatted}`)
+    }
+  }
 
   function getSession(sessionId: string): SessionState {
     const cached = sessions.get(sessionId)
@@ -139,11 +174,14 @@ export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
   }
 
   function resolveForcedTaskToolName(
-    selectedSkillIds: string[],
+    selectedSkillNames: string[],
     userInput: string,
   ): string | null {
     // Force only when scheduler is selected to avoid affecting normal chat.
-    if (!selectedSkillIds.includes('scheduler')) {
+    const schedulerSelected = selectedSkillNames.some(
+      name => name.toLowerCase().trim() === 'scheduler',
+    )
+    if (!schedulerSelected) {
       return null
     }
 
@@ -164,11 +202,12 @@ export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
     return null
   }
 
-  async function selectSkillIdsForInput(
+  async function selectSkillNamesForInput(
     userInput: string,
     availableSkillsXml: string,
+    requestId: string,
   ): Promise<string[]> {
-    const explicit = options.skillManager.selectExplicitSkillIds(
+    const explicit = options.skillManager.selectExplicitSkillNames(
       userInput,
       maxSelectedSkills,
     )
@@ -181,32 +220,39 @@ export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
     }
 
     try {
+      const routerMessages: Array<Record<string, unknown>> = [
+        {
+          role: 'system',
+          content: [
+            'Select skill names for the user request.',
+            'Return JSON exactly: {"selected_skill_names": string[]}.',
+            `Choose up to ${maxSelectedSkills} names from <available_skills>; return [] if none apply.`,
+            availableSkillsXml,
+          ].join('\n\n'),
+        },
+        {
+          role: 'user',
+          content: userInput,
+        },
+      ]
+      await logPrompt({
+        kind: 'skill_router',
+        request_id: requestId,
+        model: options.skillRouterModel,
+        messages: routerMessages,
+        response_format: { type: 'json_object' },
+      })
+
       const routerCompletion = await options.client.chat.completions.create({
         model: options.skillRouterModel,
-        messages: [
-          {
-            role: 'system',
-            content: [
-              'You are a skill router.',
-              'Choose the best skill IDs for the user request.',
-              'Return strict JSON: {"selected_skill_ids": string[]}.',
-              `Rules: choose at most ${maxSelectedSkills} skill IDs; use [] when no skill is relevant.`,
-              'Do not include unknown IDs.',
-              availableSkillsXml,
-            ].join('\n\n'),
-          },
-          {
-            role: 'user',
-            content: userInput,
-          },
-        ] as never,
+        messages: routerMessages as never,
         response_format: { type: 'json_object' } as never,
       })
 
       const routerText = contentToText(routerCompletion.choices[0]?.message?.content)
       const parsed = parseToolArguments(routerText)
-      const selected = extractRouterSelectedSkillIds(parsed)
-      return options.skillManager.filterKnownSkillIds(selected, maxSelectedSkills)
+      const selected = extractRouterSelectedSkillNames(parsed)
+      return options.skillManager.filterKnownSkillNames(selected, maxSelectedSkills)
     } catch (error) {
       const formatted = formatRequestError(error)
       console.error(`Skill routing failed: ${formatted}`)
@@ -216,6 +262,7 @@ export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
 
   async function askWithChat(
     session: SessionState,
+    requestId: string,
     userInput: string,
     dangerousCommandApproval?: (
       request: DangerousCommandRequest,
@@ -225,17 +272,33 @@ export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
     ) => Promise<boolean>,
     taskContext?: TaskToolContext,
   ): Promise<string> {
+    let memoryInstruction = ''
+    try {
+      const memoryStore = await readMemoryStoreFromProjectRoot(options.projectRoot)
+      if (memoryStore.memories.length > 0) {
+        const lines = memoryStore.memories
+          .slice()
+          .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
+          .map(item => `- ${item.key}: ${item.value}`)
+        memoryInstruction = buildMemoryPromptBlock(lines)
+      }
+    } catch (error) {
+      const formatted = formatRequestError(error)
+      console.error(`Memory injection failed: ${formatted}`)
+    }
+
     const availableSkillsXml = options.skillManager.buildAvailableSkillsXml()
-    const selectedSkillIds = await selectSkillIdsForInput(
+    const selectedSkillNames = await selectSkillNamesForInput(
       userInput,
       availableSkillsXml,
+      requestId,
     )
-    const skillInstruction = await options.skillManager.buildSkillInstructionForIds(
-      selectedSkillIds,
+    const skillInstruction = await options.skillManager.buildSkillInstructionForNames(
+      selectedSkillNames,
     )
     const combinedSystemPrompt = [
       options.systemPrompt,
-      availableSkillsXml,
+      memoryInstruction,
       skillInstruction,
     ]
       .filter(Boolean)
@@ -254,7 +317,7 @@ export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
       ...options.functionTools.getOpenAITools(),
     ]
     const maxToolRounds = 6
-    const forcedTaskTool = resolveForcedTaskToolName(selectedSkillIds, userInput)
+    const forcedTaskTool = resolveForcedTaskToolName(selectedSkillNames, userInput)
 
     for (let round = 0; round < maxToolRounds; round += 1) {
       const toolChoice =
@@ -264,6 +327,18 @@ export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
               function: { name: forcedTaskTool },
             } as const)
           : ('auto' as const)
+
+      await logPrompt({
+        kind: 'chat',
+        request_id: requestId,
+        round,
+        model: options.model,
+        tool_choice: tools.length > 0 ? toolChoice : null,
+        tools,
+        selected_skill_names: selectedSkillNames,
+        forced_task_tool: forcedTaskTool,
+        messages,
+      })
 
       const completion = await options.client.chat.completions.create({
         model: options.model,
@@ -336,11 +411,13 @@ export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
     taskContext?: TaskToolContext,
   ): Promise<{ answer: string }> {
     const session = getSession(sessionId)
+    const requestId = `req_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`
     session.turns.push({ role: 'user', content: userInput })
 
     try {
       const answer = await askWithChat(
         session,
+        requestId,
         userInput,
         dangerousCommandApproval,
         taskCreateApproval,

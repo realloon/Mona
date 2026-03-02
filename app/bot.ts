@@ -34,6 +34,7 @@ if (!systemPrompt) {
 const model = config.openai.model
 const skillRouterModel = config.openai.skillRouterModel || model
 const terminalApprovalTimeoutMs = config.approvals.terminalApprovalTimeoutMs
+const promptLogEnabled = config.devMode.enabled
 const schedulerIntervalMs = config.scheduler.intervalMs
 const defaultTaskTimezone = config.scheduler.defaultTimezone
 const requireMention = config.discord.requireMention
@@ -80,6 +81,8 @@ async function run(): Promise<void> {
   })
 
   const chatEngine = createChatEngine({
+    projectRoot: process.cwd(),
+    promptLogEnabled,
     client,
     systemPrompt,
     model,
@@ -153,6 +156,9 @@ async function run(): Promise<void> {
         console.log('Skills: 0 loaded')
       }
       console.log(`Task scheduler: running (interval=${schedulerIntervalMs}ms)`)
+      if (promptLogEnabled) {
+        console.log('Prompt logging: enabled (.agents/debug/prompts.jsonl)')
+      }
     })().catch(error => {
       const message = error instanceof Error ? error.message : String(error)
       console.error(`Failed to initialize Discord bot: ${message}`)

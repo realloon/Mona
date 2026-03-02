@@ -14,6 +14,9 @@ export type MonaConfig = {
   approvals: {
     terminalApprovalTimeoutMs: number
   }
+  devMode: {
+    enabled: boolean
+  }
   scheduler: {
     intervalMs: number
     defaultTimezone: string

@@ -16,6 +16,9 @@ export default defineConfig({
   approvals: {
     terminalApprovalTimeoutMs: 30000,
   },
+  devMode: {
+    enabled: false,
+  },
   scheduler: {
     intervalMs: 10000,
     defaultTimezone: 'Asia/Shanghai',

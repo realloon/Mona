@@ -18,15 +18,15 @@ describe('SkillManager', () => {
     const [firstSkill] = manager.getSummaries()
     expect(firstSkill).toBeDefined()
 
-    const selectedIds = manager.selectExplicitSkillIds(
-      `please use $${firstSkill!.id}`,
+    const selectedNames = manager.selectExplicitSkillNames(
+      `please use $${firstSkill!.name}`,
     )
-    expect(selectedIds).toContain(firstSkill!.id)
+    expect(selectedNames).toContain(firstSkill!.name)
 
-    const selected = await manager.buildSkillInstructionForIds(selectedIds)
+    const selected = await manager.buildSkillInstructionForNames(selectedNames)
     expect(selected).toContain(`Skill: ${firstSkill!.name}`)
 
-    const notSelected = manager.selectExplicitSkillIds(
+    const notSelected = manager.selectExplicitSkillNames(
       'just chatting without skill mention',
     )
     expect(notSelected).toEqual([])
@@ -39,22 +39,20 @@ describe('SkillManager', () => {
     const xml = manager.buildAvailableSkillsXml()
     expect(xml).toContain('<available_skills>')
     expect(xml).toContain('<skill>')
-    expect(xml).toContain('<id>')
     expect(xml).toContain('<name>')
     expect(xml).toContain('<description>')
-    expect(xml).toContain('<location>')
   })
 
-  test('keeps only known skill ids', async () => {
+  test('keeps only known skill names', async () => {
     const manager = new SkillManager()
     await manager.loadFromConfigDir()
     const [firstSkill] = manager.getSummaries()
     expect(firstSkill).toBeDefined()
 
-    const filtered = manager.filterKnownSkillIds(
-      [firstSkill!.id, 'unknown-skill'],
+    const filtered = manager.filterKnownSkillNames(
+      [firstSkill!.name, 'unknown-skill'],
       2,
     )
-    expect(filtered).toEqual([firstSkill!.id])
+    expect(filtered).toEqual([firstSkill!.name])
   })
 })
