@@ -1,10 +1,11 @@
 import path from 'node:path'
-import { appendFile, mkdir } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rm } from 'node:fs/promises'
 import OpenAI from 'openai'
 import { McpToolManager, parseToolArguments } from '../mcp'
 import { SkillManager } from '../skills'
 import { FunctionToolManager } from '../tools'
 import { readMemoryStoreFromProjectRoot } from '../tools/memory'
+import { asObject } from '../utils/guards'
 import {
   TASK_CREATE_TOOL,
   TASK_LIST_TOOL,
@@ -151,6 +152,7 @@ function buildSystemPrompt(
 }
 
 const PROMPT_LOG_RELATIVE_PATH = '.agents/debug/prompts.jsonl'
+const SESSIONS_DIR_RELATIVE_PATH = '.agents/sessions'
 
 async function appendPromptLog(
   projectRoot: string,
@@ -161,9 +163,36 @@ async function appendPromptLog(
   await appendFile(logPath, `${JSON.stringify(payload)}\n`, 'utf8')
 }
 
+function normalizeTurn(raw: unknown): Turn | null {
+  const obj = asObject(raw)
+  const role = obj.role === 'assistant' ? 'assistant' : obj.role === 'user' ? 'user' : null
+  const content = typeof obj.content === 'string' ? obj.content : null
+  if (!role || content === null) {
+    return null
+  }
+
+  return { role, content }
+}
+
+function getSessionFilePath(projectRoot: string, sessionId: string): string {
+  const safeSessionId = Buffer.from(sessionId).toString('base64url') || 'empty'
+  return path.join(projectRoot, SESSIONS_DIR_RELATIVE_PATH, `${safeSessionId}.jsonl`)
+}
+
+function isEnoentError(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'ENOENT'
+  )
+}
+
 export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
   const sessions = new Map<string, SessionState>()
+  const clearedSessionIds = new Set<string>()
   const maxSelectedSkills = options.maxSelectedSkills ?? 1
+  const sessionWriteQueues = new Map<string, Promise<void>>()
 
   async function logPrompt(payload: Record<string, unknown>): Promise<void> {
     if (!options.promptLogEnabled) {
@@ -180,21 +209,101 @@ export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
     }
   }
 
-  function getSession(sessionId: string): SessionState {
+  function queueSessionWrite(sessionId: string, task: () => Promise<void>): Promise<void> {
+    const previous = sessionWriteQueues.get(sessionId) ?? Promise.resolve()
+    const current = previous.then(task, task)
+    sessionWriteQueues.set(sessionId, current)
+    void current.finally(() => {
+      if (sessionWriteQueues.get(sessionId) === current) {
+        sessionWriteQueues.delete(sessionId)
+      }
+    })
+    return current
+  }
+
+  async function loadPersistedSession(sessionId: string): Promise<SessionState> {
+    const sessionPath = getSessionFilePath(options.projectRoot, sessionId)
+    try {
+      const raw = await readFile(sessionPath, 'utf8')
+      const lines = raw.split('\n')
+      const turns: Turn[] = []
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed) {
+          continue
+        }
+        try {
+          const parsed = JSON.parse(trimmed)
+          const turn = normalizeTurn(parsed)
+          if (turn) {
+            turns.push(turn)
+          }
+        } catch {
+          // Skip malformed JSONL lines and continue loading remaining turns.
+        }
+      }
+      return { turns }
+    } catch (error) {
+      if (isEnoentError(error)) {
+        return { turns: [] }
+      }
+      const formatted = formatRequestError(error)
+      console.error(`Session restore failed for "${sessionId}": ${formatted}`)
+      return { turns: [] }
+    }
+  }
+
+  async function appendSessionTurns(sessionId: string, turns: Turn[]): Promise<void> {
+    if (turns.length === 0) {
+      return
+    }
+
+    const sessionPath = getSessionFilePath(options.projectRoot, sessionId)
+    const payload = `${turns.map(turn => JSON.stringify(turn)).join('\n')}\n`
+    try {
+      await queueSessionWrite(sessionId, async () => {
+        await mkdir(path.dirname(sessionPath), { recursive: true })
+        await appendFile(sessionPath, payload, 'utf8')
+      })
+      clearedSessionIds.delete(sessionId)
+    } catch (error) {
+      const formatted = formatRequestError(error)
+      console.error(`Session persist failed for "${sessionId}": ${formatted}`)
+    }
+  }
+
+  async function deletePersistedSession(sessionId: string): Promise<void> {
+    const sessionPath = getSessionFilePath(options.projectRoot, sessionId)
+    await queueSessionWrite(sessionId, async () => {
+      await rm(sessionPath, { force: true })
+    })
+  }
+
+  async function getSession(sessionId: string): Promise<SessionState> {
     const cached = sessions.get(sessionId)
     if (cached) {
       return cached
     }
 
-    const created: SessionState = {
-      turns: [],
+    if (clearedSessionIds.has(sessionId)) {
+      const fresh: SessionState = { turns: [] }
+      sessions.set(sessionId, fresh)
+      return fresh
     }
-    sessions.set(sessionId, created)
-    return created
+
+    const restored = await loadPersistedSession(sessionId)
+    sessions.set(sessionId, restored)
+    return restored
   }
 
   function clearSession(sessionId: string): boolean {
-    return sessions.delete(sessionId)
+    const clearedInMemory = sessions.delete(sessionId)
+    clearedSessionIds.add(sessionId)
+    void deletePersistedSession(sessionId).catch(error => {
+      const formatted = formatRequestError(error)
+      console.error(`Session clear failed for "${sessionId}": ${formatted}`)
+    })
+    return clearedInMemory
   }
 
   function resolveForcedTaskToolName(
@@ -434,9 +543,11 @@ export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
     ) => Promise<boolean>,
     taskContext?: TaskToolContext,
   ): Promise<{ answer: string }> {
-    const session = getSession(sessionId)
+    const session = await getSession(sessionId)
     const requestId = `req_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`
-    session.turns.push({ role: 'user', content: userInput })
+    const userTurn: Turn = { role: 'user', content: userInput }
+    session.turns.push(userTurn)
+    await appendSessionTurns(sessionId, [userTurn])
 
     try {
       const answer = await askWithChat(
@@ -447,10 +558,11 @@ export function createChatEngine(options: CreateChatEngineOptions): ChatEngine {
         taskCreateApproval,
         taskContext,
       )
-      session.turns.push({ role: 'assistant', content: answer })
+      const assistantTurn: Turn = { role: 'assistant', content: answer }
+      session.turns.push(assistantTurn)
+      await appendSessionTurns(sessionId, [assistantTurn])
       return { answer }
     } catch (error) {
-      session.turns.pop()
       throw error
     }
   }
