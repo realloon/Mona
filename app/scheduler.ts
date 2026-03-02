@@ -1,5 +1,6 @@
 import type OpenAI from 'openai'
 import type { Client as DiscordClient } from 'discord.js'
+import { toErrorMessage } from './utils/errors'
 import {
   computeFollowingRunAt,
   isTaskDue,
@@ -163,7 +164,7 @@ export class TaskScheduler {
         await this.runOne(task.id)
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = toErrorMessage(error)
       console.error(`Task scheduler tick failed: ${message}`)
     } finally {
       this.tickInFlight = false
@@ -210,7 +211,7 @@ export class TaskScheduler {
         }
         await writeTaskStoreFromProjectRoot(this.projectRoot, nextStore)
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error)
+        const errorMessage = toErrorMessage(error)
         await this.publishTaskResult(task, buildFailureMessage(task, errorMessage))
 
         const nextStore = await readTaskStoreFromProjectRoot(this.projectRoot)
@@ -231,7 +232,7 @@ export class TaskScheduler {
         await writeTaskStoreFromProjectRoot(this.projectRoot, nextStore)
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = toErrorMessage(error)
       console.error(`Task run failed (${taskId}): ${message}`)
     } finally {
       this.runningTaskIds.delete(taskId)

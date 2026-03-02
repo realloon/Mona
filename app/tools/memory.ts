@@ -1,8 +1,12 @@
-import { file, write } from 'bun'
-import { rename, rm } from 'node:fs/promises'
 import type { OpenAIFunctionTool } from '../types/tools'
 import type { FunctionToolRuntime } from '../types/tools'
 import { asObject } from '../utils/guards'
+import {
+  parseIsoDateOrNull,
+  readJsonIfExists,
+  toErrorMessage,
+  writeJsonAtomic,
+} from '../utils/persistence'
 
 export const MEMORY_SET_TOOL = 'builtin__memory_set'
 export const MEMORY_LIST_TOOL = 'builtin__memory_list'
@@ -112,17 +116,6 @@ function isoNow(): string {
   return new Date().toISOString()
 }
 
-function parseDateOrNull(value: unknown): string | null {
-  if (typeof value !== 'string' || !value.trim()) {
-    return null
-  }
-  const date = new Date(value)
-  if (!Number.isFinite(date.getTime())) {
-    return null
-  }
-  return date.toISOString()
-}
-
 function normalizeMemoryRecord(raw: unknown): MemoryRecord | null {
   const obj = asObject(raw)
   const key = typeof obj.key === 'string' ? obj.key.trim() : ''
@@ -131,8 +124,8 @@ function normalizeMemoryRecord(raw: unknown): MemoryRecord | null {
     return null
   }
 
-  const createdAt = parseDateOrNull(obj.created_at) ?? isoNow()
-  const updatedAt = parseDateOrNull(obj.updated_at) ?? createdAt
+  const createdAt = parseIsoDateOrNull(obj.created_at) ?? isoNow()
+  const updatedAt = parseIsoDateOrNull(obj.updated_at) ?? createdAt
   return {
     key,
     value,
@@ -163,17 +156,10 @@ function normalizeMemoryStore(raw: unknown): MemoryStore {
 }
 
 async function readMemoryStoreFromPath(path: string): Promise<MemoryStore> {
-  const ref = file(path)
-  if (!(await ref.exists())) {
+  const parsed = await readJsonIfExists(path)
+  if (parsed === null) {
     return { memories: [] }
   }
-
-  const raw = (await ref.text()).trim()
-  if (!raw) {
-    return { memories: [] }
-  }
-
-  const parsed = JSON.parse(raw)
   return normalizeMemoryStore(parsed)
 }
 
@@ -194,16 +180,7 @@ async function writeMemoryStore(
   store: MemoryStore,
 ): Promise<void> {
   const path = getMemoryStorePath(runtime)
-  const tempPath = `${path}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
-  const content = `${JSON.stringify(store, null, 2)}\n`
-  await write(tempPath, content, { createPath: true })
-
-  try {
-    await rename(tempPath, path)
-  } catch (error) {
-    await rm(tempPath, { force: true }).catch(() => {})
-    throw error
-  }
+  await writeJsonAtomic(path, store)
 }
 
 function truncatePreview(input: string, max = 160): string {
@@ -245,8 +222,7 @@ export async function callMemorySetTool(
   try {
     store = await readMemoryStore(runtime)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `Read memory store failed: ${message}`
+    return `Read memory store failed: ${toErrorMessage(error)}`
   }
 
   const existing = store.memories.find(item => item.key === key)
@@ -269,8 +245,7 @@ export async function callMemorySetTool(
   try {
     await writeMemoryStore(runtime, store)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `Write memory store failed: ${message}`
+    return `Write memory store failed: ${toErrorMessage(error)}`
   }
 
   return [
@@ -294,8 +269,7 @@ export async function callMemoryListTool(
   try {
     store = await readMemoryStore(runtime)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `Read memory store failed: ${message}`
+    return `Read memory store failed: ${toErrorMessage(error)}`
   }
 
   let rows = [...store.memories]
@@ -343,8 +317,7 @@ export async function callMemoryDeleteTool(
   try {
     store = await readMemoryStore(runtime)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `Read memory store failed: ${message}`
+    return `Read memory store failed: ${toErrorMessage(error)}`
   }
 
   const index = store.memories.findIndex(item => item.key === key)
@@ -356,8 +329,7 @@ export async function callMemoryDeleteTool(
   try {
     await writeMemoryStore(runtime, store)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `Write memory store failed: ${message}`
+    return `Write memory store failed: ${toErrorMessage(error)}`
   }
 
   return [`key: ${key}`, 'status: deleted', 'path: .agents/memory.json'].join('\n')

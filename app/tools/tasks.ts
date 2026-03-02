@@ -1,11 +1,15 @@
-import { file, write } from 'bun'
-import { rename, rm } from 'node:fs/promises'
 import type { OpenAIFunctionTool } from '../types/tools'
 import { asObject } from '../utils/guards'
 import type {
   FunctionToolCallHooks,
   FunctionToolRuntime,
 } from '../types/tools'
+import {
+  parseIsoDateOrNull,
+  readJsonIfExists,
+  toErrorMessage,
+  writeJsonAtomic,
+} from '../utils/persistence'
 
 export const TASK_CREATE_TOOL = 'builtin__task_create'
 export const TASK_LIST_TOOL = 'builtin__task_list'
@@ -537,17 +541,6 @@ function parsePromptFromArgs(rawArgs: unknown): {
   }
 }
 
-function parseDateOrNull(value: unknown): string | null {
-  if (typeof value !== 'string' || !value.trim()) {
-    return null
-  }
-  const date = new Date(value)
-  if (!Number.isFinite(date.getTime())) {
-    return null
-  }
-  return date.toISOString()
-}
-
 function normalizeLastStatus(value: unknown): TaskLastStatus {
   if (
     value === 'idle' ||
@@ -584,13 +577,13 @@ function normalizeTaskRecord(raw: unknown): TaskRecord | null {
       : undefined
 
   const now = new Date()
-  const nextRunAtRaw = parseDateOrNull(obj.next_run_at)
+  const nextRunAtRaw = parseIsoDateOrNull(obj.next_run_at)
   const nextRunAt = nextRunAtRaw
     ? nextRunAtRaw
     : computeNextRunAt(scheduleParsed.schedule, now).toISOString()
 
-  const createdAt = parseDateOrNull(obj.created_at) ?? isoNow()
-  const updatedAt = parseDateOrNull(obj.updated_at) ?? createdAt
+  const createdAt = parseIsoDateOrNull(obj.created_at) ?? isoNow()
+  const updatedAt = parseIsoDateOrNull(obj.updated_at) ?? createdAt
 
   return {
     id,
@@ -604,8 +597,8 @@ function normalizeTaskRecord(raw: unknown): TaskRecord | null {
     prompt,
     ...(model ? { model } : {}),
     next_run_at: nextRunAt,
-    last_run_started_at: parseDateOrNull(obj.last_run_started_at),
-    last_run_at: parseDateOrNull(obj.last_run_at),
+    last_run_started_at: parseIsoDateOrNull(obj.last_run_started_at),
+    last_run_at: parseIsoDateOrNull(obj.last_run_at),
     last_status: normalizeLastStatus(obj.last_status),
     last_error:
       typeof obj.last_error === 'string' ? obj.last_error : null,
@@ -633,17 +626,10 @@ function normalizeTaskStore(raw: unknown): TaskStore {
 }
 
 async function readTaskStoreFromPath(path: string): Promise<TaskStore> {
-  const ref = file(path)
-  if (!(await ref.exists())) {
+  const parsed = await readJsonIfExists(path)
+  if (parsed === null) {
     return { tasks: [] }
   }
-
-  const raw = (await ref.text()).trim()
-  if (!raw) {
-    return { tasks: [] }
-  }
-
-  const parsed = JSON.parse(raw)
   return normalizeTaskStore(parsed)
 }
 
@@ -660,16 +646,7 @@ export async function readTaskStoreFromProjectRoot(
 }
 
 async function writeTaskStoreToPath(path: string, store: TaskStore): Promise<void> {
-  const tempPath = `${path}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
-  const content = `${JSON.stringify(store, null, 2)}\n`
-
-  await write(tempPath, content, { createPath: true })
-  try {
-    await rename(tempPath, path)
-  } catch (error) {
-    await rm(tempPath, { force: true }).catch(() => {})
-    throw error
-  }
+  await writeJsonAtomic(path, store)
 }
 
 async function writeTaskStore(
@@ -778,8 +755,7 @@ export async function callTaskCreateTool(
   try {
     store = await readTaskStore(runtime)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `Read task store failed: ${message}`
+    return `Read task store failed: ${toErrorMessage(error)}`
   }
 
   const nowIso = isoNow()
@@ -805,8 +781,7 @@ export async function callTaskCreateTool(
   try {
     await writeTaskStore(runtime, store)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `Write task store failed: ${message}`
+    return `Write task store failed: ${toErrorMessage(error)}`
   }
 
   return [
@@ -833,8 +808,7 @@ export async function callTaskListTool(
   try {
     store = await readTaskStore(runtime)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `Read task store failed: ${message}`
+    return `Read task store failed: ${toErrorMessage(error)}`
   }
 
   const tasks = enabledOnly
@@ -877,8 +851,7 @@ export async function callTaskPauseTool(
   try {
     store = await readTaskStore(runtime)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `Read task store failed: ${message}`
+    return `Read task store failed: ${toErrorMessage(error)}`
   }
 
   const task = findTaskById(store, id)
@@ -892,8 +865,7 @@ export async function callTaskPauseTool(
   try {
     await writeTaskStore(runtime, store)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `Write task store failed: ${message}`
+    return `Write task store failed: ${toErrorMessage(error)}`
   }
 
   return [
@@ -917,8 +889,7 @@ export async function callTaskResumeTool(
   try {
     store = await readTaskStore(runtime)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `Read task store failed: ${message}`
+    return `Read task store failed: ${toErrorMessage(error)}`
   }
 
   const task = findTaskById(store, id)
@@ -940,8 +911,7 @@ export async function callTaskResumeTool(
   try {
     await writeTaskStore(runtime, store)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `Write task store failed: ${message}`
+    return `Write task store failed: ${toErrorMessage(error)}`
   }
 
   return [

@@ -5,6 +5,10 @@ type RequestErrorLike = Error & {
   type?: string
 }
 
+export function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 export function formatRequestError(error: unknown): string {
   if (!(error instanceof Error)) {
     return String(error)

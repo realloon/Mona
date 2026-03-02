@@ -4,6 +4,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import type { OpenAIFunctionTool } from './types/tools'
+import { toErrorMessage } from './utils/errors'
 
 type McpServerConfig = {
   url?: string
@@ -140,7 +141,7 @@ async function readMcpServersFromConfigFile(): Promise<{
       servers: parseMcpServersFromJson(parsed),
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = toErrorMessage(error)
     throw new Error(`Failed to load MCP config from ${configPath}: ${message}`)
   }
 }
@@ -176,7 +177,7 @@ async function readMcpStateFile(): Promise<PersistedMcpState> {
     const parsed = JSON.parse(raw)
     return normalizePersistedState(parsed)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = toErrorMessage(error)
     throw new Error(`Failed to parse MCP state file ${statePath}: ${message}`)
   }
 }
@@ -369,7 +370,7 @@ export class McpToolManager {
       })
       return normalizeToolContent(result)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = toErrorMessage(error)
       return `MCP tool call failed (${binding.mcpServerName}/${binding.mcpToolName}): ${message}`
     }
   }
@@ -428,7 +429,7 @@ export class McpToolManager {
     try {
       await transport.close()
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = toErrorMessage(error)
       console.error(`Failed to close MCP transport ${serverName}: ${message}`)
     }
 

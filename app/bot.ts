@@ -14,6 +14,7 @@ import {
   registerSlashCommands,
 } from './gateway/interaction-handler'
 import { createMessageHandler } from './gateway/message-handler'
+import { toErrorMessage } from './utils/errors'
 
 const client = new OpenAI({
   apiKey: config.openai.apiKey,
@@ -54,7 +55,7 @@ async function run(): Promise<void> {
   try {
     mcpLoad = await mcpTools.loadFromConfig()
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = toErrorMessage(error)
     throw new Error(`MCP initialization failed: ${message}`)
   }
 
@@ -62,7 +63,7 @@ async function run(): Promise<void> {
   try {
     skillLoad = await skillManager.loadFromConfigDir()
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = toErrorMessage(error)
     throw new Error(`Skills initialization failed: ${message}`)
   }
 
@@ -160,7 +161,7 @@ async function run(): Promise<void> {
         console.log('Prompt logging: enabled (.agents/debug/prompts.jsonl)')
       }
     })().catch(error => {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = toErrorMessage(error)
       console.error(`Failed to initialize Discord bot: ${message}`)
       taskScheduler.stop()
     })
@@ -177,13 +178,13 @@ async function run(): Promise<void> {
   try {
     await discordClient.login(config.discord.botToken)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = toErrorMessage(error)
     throw new Error(`Discord login failed: ${message}`)
   }
 }
 
 run().catch(error => {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = toErrorMessage(error)
   console.error(`Fatal error: ${message}`)
   void mcpTools.closeAll()
   process.exit(1)
